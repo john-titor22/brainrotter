@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brainrotter"
+version = "0.1.0"
+description = "A software that manufactures brainrot videos and learns to invent its own."
+requires-python = ">=3.11"
+dependencies = [
+    "edge-tts>=6.1",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "httpx",
+    "yt-dlp[default]>=2026.8.30",   # [default] pulls yt-dlp-ejs for YouTube's JS challenge
+    "praw>=7.7",
+    "python-dotenv>=1.0",
+    "pillow>=10",
+    "rich>=13",
+    "typer>=0.12",
+    "toml>=0.10",
+]
+
+[project.optional-dependencies]
+# Only if you set writer.provider = "anthropic".
+anthropic = ["anthropic>=0.40"]
+# The render engine's own deps (vendored MoneyPrinterTurbo).
+engine = [
+    "moviepy==2.2.1", "faster-whisper>=1.0", "loguru", "pydub", "numpy",
+    "imageio-ffmpeg", "google-genai", "litellm",
+]
+
+[project.scripts]
+brainrotter = "brainrotter.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["brainrotter*"]
+
+[tool.ruff]
+line-length = 100

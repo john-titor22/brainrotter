@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brainrotter</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0d0e12">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  :root {
+    --bg: #0d0e12; --panel: #16181f; --panel2: #1d2029; --line: #2a2e3a;
+    --text: #e6e8ee; --dim: #8b90a0; --accent: #b46bff; --good: #4ade80;
+    --bad: #f87171; --work: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 12px; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .5px; }
+  header .tag { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 20px; padding: 20px 24px; max-width: 1400px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+  input, select, button { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; width: 100%; }
+  button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; margin-top: 14px; }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 12px; display: grid; grid-template-columns: 1fr 220px; gap: 16px; }
+  .job .meta { min-width: 0; }
+  .job .title { font-weight: 600; margin-bottom: 2px; }
+  .job .sub { color: var(--dim); font-size: 12px; word-break: break-word; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px;
+    text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+  .b-done { background: rgba(74,222,128,.15); color: var(--good); }
+  .b-failed { background: rgba(248,113,113,.15); color: var(--bad); }
+  .b-work { background: rgba(251,191,36,.15); color: var(--work); }
+  video { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 9/16; }
+  .why { font-size: 11px; color: var(--dim); margin-top: 6px; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td, th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  .empty { color: var(--dim); padding: 24px; text-align: center; }
+  .bar { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>BRAINROTTER</h1>
+  <span class="tag">the brainrot video factory &mdash; local dashboard</span>
+</header>
+<main>
+  <div class="col">
+    <div class="panel">
+      <h2>Queue</h2>
+      <div id="queuestat" class="sub">loading&hellip;</div>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="pausebtn" onclick="togglePause()">Pause</button>
+        <button class="ghost" onclick="clearQueue()">Clear waiting</button>
+      </div>
+      <button class="ghost" style="width:100%;margin-top:8px" onclick="clearHistory()">
+        Clear finished history
+      </button>
+    </div>
+
+    <div class="panel">
+      <h2>New job</h2>
+      <label>Format</label>
+      <select id="format"><option value="">Let the Director decide</option></select>
+      <label>Topic <span style="opacity:.6">(optional &mdash; overrides trends)</span></label>
+      <input id="topic" placeholder="e.g. petty revenge on a landlord">
+      <div class="row">
+        <div><label>Count</label><input id="count" type="number" value="1" min="1" max="50"></div>
+      </div>
+      <button onclick="queueJob()">Queue it</button>
+      <div class="sub" style="margin-top:8px">Jobs run one at a time — the next starts only when the current finishes.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Format performance</h2>
+      <table id="formats"><tbody></tbody></table>
+    </div>
+
+    <div class="panel">
+      <h2>Trend signals</h2>
+      <table id="trends"><tbody></tbody></table>
+      <button class="ghost" onclick="loadTrends()">Refresh</button>
+    </div>
+  </div>
+
+  <div class="col">
+    <div id="jobs"></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const WORK = new Set(["queued","directing","writing","synthesizing","aligning","assembling","rendering"]);
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+
+async function queueJob() {
+  const body = {
+    format_id: $("#format").value || null,
+    topic: $("#topic").value.trim() || null,
+    count: parseInt($("#count").value) || 1,
+  };
+  try { await api("/api/jobs", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body)});
+    $("#topic").value = ""; loadJobs();
+  } catch (e) { alert(e.message); }
+}
+
+function badge(state) {
+  const cls = state === "done" ? "b-done" : state === "failed" ? "b-failed" : "b-work";
+  return `<span class="badge ${cls}">${state}</span>`;
+}
+
+function jobCardHTML(j) {
+  const b = j.brief || {}, r = j.result || {}, s = j.script || {};
+  const right = j.state === "done"
+    ? `<video controls preload="metadata" playsinline src="/api/video/${j.id}"></video>`
+    : j.state === "failed"
+    ? `<div class="sub" style="color:var(--bad)">${esc(j.error || "failed")}</div>`
+    : j.state === "canceled"
+    ? `<div class="sub">canceled</div>`
+    : `<div class="sub">working&hellip;<div class="bar"><i style="width:${progress(j.state)}%"></i></div></div>`;
+  return `<div class="meta">
+      <div class="title">${esc(s.title || b.topic || j.topic || "(pending)")}</div>
+      <div class="sub">${badge(j.state)} &nbsp; ${esc(b.format_id || j.format_id || "?")}
+        ${r.seconds ? ` &nbsp; rendered in ${r.seconds}s` : ""}
+        ${r.duration ? ` &nbsp; ${Math.round(r.duration)}s long` : ""}</div>
+      ${b.hook ? `<div class="sub">&ldquo;${esc(b.hook)}&rdquo;</div>` : ""}
+      ${b.rationale ? `<div class="why">${esc(b.rationale)}</div>` : ""}
+    </div>
+    <div>${right}</div>`;
+}
+
+// Incremental render: never touch an existing card's DOM node unless its state
+// actually changed, and never MOVE a node (moving a <video> resets playback).
+// The API returns jobs newest-first; new ones are prepended, gone ones removed.
+const cardSig = {};
+async function loadJobs() {
+  const { jobs } = await api("/api/jobs");
+  const el = $("#jobs");
+  if (!jobs.length) {
+    if (!el.querySelector(".empty"))
+      el.innerHTML = '<div class="empty">No jobs yet. Queue one on the left.</div>';
+    return;
+  }
+  const empty = el.querySelector(".empty");
+  if (empty) empty.remove();
+
+  const seen = new Set();
+  // walk oldest-first so prepends end up in newest-first order
+  [...jobs].reverse().forEach(j => {
+    seen.add(j.id);
+    const sig = JSON.stringify([j.state, (j.script||{}).title, (j.result||{}).seconds, j.error]);
+    let card = document.getElementById("job-" + j.id);
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "job";
+      card.id = "job-" + j.id;
+      card.innerHTML = jobCardHTML(j);
+      cardSig[j.id] = sig;
+      el.prepend(card);            // newest goes on top
+      card.querySelector("video")?.load();   // innerHTML videos need a nudge
+    } else if (cardSig[j.id] !== sig) {
+      card.innerHTML = jobCardHTML(j);   // state changed — rebuild in place
+      cardSig[j.id] = sig;
+      card.querySelector("video")?.load();
+    }
+  });
+  [...el.children].forEach(c => {
+    if (c.id?.startsWith("job-") && !seen.has(c.id.slice(4))) {
+      delete cardSig[c.id.slice(4)];
+      c.remove();
+    }
+  });
+}
+
+function progress(state) {
+  return {queued:5, directing:15, writing:30, synthesizing:45, aligning:60, assembling:75, rendering:85}[state] || 50;
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+let PAUSED = false;
+async function loadQueue() {
+  try {
+    const s = await api("/api/queue");
+    PAUSED = s.paused;
+    $("#pausebtn").textContent = s.paused ? "Resume" : "Pause";
+    $("#queuestat").innerHTML =
+      `<b>${s.queued}</b> waiting &nbsp;·&nbsp; ${s.in_flight} running &nbsp;·&nbsp; `
+      + `${s.done} done &nbsp;·&nbsp; ${s.failed} failed`
+      + (s.paused ? ` &nbsp;·&nbsp; <span style="color:var(--work)">PAUSED</span>` : "");
+  } catch (e) {}
+}
+async function togglePause() {
+  await api(PAUSED ? "/api/queue/resume" : "/api/queue/pause", {method:"POST"});
+  loadQueue();
+}
+async function clearQueue() {
+  if (!confirm("Cancel all waiting jobs? The running one keeps going.")) return;
+  await api("/api/queue/clear", {method:"POST"});
+  loadQueue(); loadJobs();
+}
+async function clearHistory() {
+  if (!confirm("Delete all finished jobs and their video files? Keeps the 3 most recent.")) return;
+  const r = await api("/api/jobs/clear-history", {
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({keep_last: 3}),
+  });
+  alert(`Removed ${r.removed_jobs} jobs, ${r.removed_files} video files.`);
+  loadQueue(); loadJobs();
+}
+
+async function loadFormats() {
+  const { formats } = await api("/api/formats");
+  $("#format").innerHTML = '<option value="">Let the Director decide</option>' +
+    formats.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+  $("#formats tbody").innerHTML =
+    `<tr><th>format</th><th>published</th><th>score</th></tr>` +
+    formats.map(f => `<tr><td>${f.id}</td><td>${f.stats.n_published||0}</td>
+      <td>${(f.stats.ewma_score||0).toFixed(2)}</td></tr>`).join("");
+}
+
+async function loadTrends() {
+  const { signals } = await api("/api/trends");
+  $("#trends tbody").innerHTML =
+    `<tr><th>src</th><th>score</th><th>title</th></tr>` +
+    signals.slice(0,12).map(s => `<tr><td>${s.source}</td><td>${s.score.toFixed(2)}</td>
+      <td>${esc(s.title.slice(0,48))}</td></tr>`).join("");
+}
+
+loadFormats(); loadTrends(); loadJobs(); loadQueue();
+setInterval(() => { loadJobs(); loadQueue(); }, 2500);
+setInterval(loadFormats, 15000);
+</script>
+</body>
+</html>

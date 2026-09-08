@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  body {
+    width: 264px; margin: 0; padding: 16px;
+    background: #0d0e12; color: #e6e8ee;
+    font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .head img { width: 30px; height: 30px; }
+  .head b { font-size: 15px; letter-spacing: .5px; }
+  .stat { display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 1px solid #23262f; }
+  .stat:last-of-type { border: 0; }
+  .stat span:last-child { font-weight: 600; }
+  .dot { color: #8b90a0; }
+  .ok { color: #4ade80; } .work { color: #fbbf24; } .off { color: #f87171; }
+  button { width: 100%; margin-top: 14px; padding: 9px; border: 0; border-radius: 8px;
+    background: #b46bff; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  .row { display: flex; gap: 8px; }
+  .row button { background: #1d2029; color: #e6e8ee; border: 1px solid #2a2e3a; font-weight: 500; }
+  #msg { margin-top: 10px; color: #8b90a0; font-size: 12px; min-height: 1em; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <img src="icons/48.png" alt="">
+    <b>BRAINROTTER</b>
+  </div>
+  <div id="stats">
+    <div class="stat"><span class="dot">status</span><span id="status">…</span></div>
+    <div class="stat"><span class="dot">rendering</span><span id="inflight">–</span></div>
+    <div class="stat"><span class="dot">waiting</span><span id="queued">–</span></div>
+    <div class="stat"><span class="dot">done</span><span id="done">–</span></div>
+  </div>
+  <button id="open">Open dashboard</button>
+  <div class="row">
+    <button id="pause">Pause</button>
+    <button id="clear">Clear waiting</button>
+  </div>
+  <div id="msg"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1550"/>
+      <stop offset="1" stop-color="#0a0a10"/>
+    </linearGradient>
+    <linearGradient id="brain" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eab4ff"/>
+      <stop offset="0.45" stop-color="#b46bff"/>
+      <stop offset="1" stop-color="#7431cf"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+
+  <!-- chromatic-aberration "rot" ghosts -->
+  <g id="lobes" opacity="0.32" transform="translate(-6 2)" fill="#33e0ff">
+    <circle cx="196" cy="196" r="60"/><circle cx="256" cy="172" r="66"/>
+    <circle cx="316" cy="196" r="60"/><circle cx="162" cy="246" r="54"/>
+    <circle cx="350" cy="246" r="54"/><circle cx="210" cy="286" r="58"/>
+    <circle cx="302" cy="286" r="58"/><circle cx="256" cy="252" r="74"/>
+  </g>
+  <use href="#lobes" opacity="0.32" transform="translate(6 -2)" fill="#ff45c8"/>
+
+  <!-- melt drips (teardrops) -->
+  <g fill="url(#brain)">
+    <path d="M188 296 c-10 22 -12 44 0 62 c11 0 20 -12 20 -30 c0 -16 -6 -30 -20 -32z"/>
+    <path d="M256 312 c-11 30 -12 60 0 82 c13 0 22 -16 22 -38 c0 -20 -7 -40 -22 -44z"/>
+    <path d="M326 296 c-11 20 -13 42 -2 60 c12 0 21 -12 21 -30 c0 -16 -6 -28 -19 -30z"/>
+  </g>
+
+  <!-- brain -->
+  <g filter="url(#glow)" fill="url(#brain)">
+    <circle cx="196" cy="196" r="60"/><circle cx="256" cy="172" r="66"/>
+    <circle cx="316" cy="196" r="60"/><circle cx="162" cy="246" r="54"/>
+    <circle cx="350" cy="246" r="54"/><circle cx="210" cy="286" r="58"/>
+    <circle cx="302" cy="286" r="58"/><circle cx="256" cy="252" r="74"/>
+  </g>
+
+  <!-- sulci + hemisphere divide -->
+  <g fill="none" stroke="#5a24a8" stroke-width="11" stroke-linecap="round" opacity="0.75">
+    <path d="M256 132 C 250 190 262 220 256 300"/>
+    <path d="M170 210 C 200 224 210 250 190 280"/>
+    <path d="M342 210 C 312 224 302 250 322 280"/>
+    <path d="M214 168 C 236 186 232 210 210 224"/>
+    <path d="M300 168 C 278 186 282 210 304 224"/>
+  </g>
+
+  <!-- play button -->
+  <circle cx="256" cy="252" r="66" fill="#0b0a12" opacity="0.62"/>
+  <circle cx="256" cy="252" r="66" fill="none" stroke="#f0e2ff" stroke-width="5" opacity="0.5"/>
+  <path d="M236 216 L302 252 L236 288 Z" fill="#f6efff"/>
+</svg>

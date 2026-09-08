@@ -1,0 +1,84 @@
+# Copy to config.toml. All values have sane defaults; override what you need.
+
+[general]
+# Where finished, publish-ready videos land.
+out_dir = "workspace/out"
+
+[writer]
+# "ollama" = fully local, no API key (default). "anthropic" = Claude API.
+provider = "ollama"
+ollama_url = "http://localhost:11434"
+# Pull one first:  ollama pull llama3.1:8b   (fits an 8GB GPU at Q4)
+# Good alternatives: qwen2.5:7b, gemma2:9b, mistral-nemo
+ollama_model = "llama3.1:8b"
+ollama_fast_model = "llama3.1:8b"
+temperature = 0.95
+# Only used when provider = "anthropic":
+anthropic_model = "claude-opus-5"
+anthropic_fast_model = "claude-sonnet-5"
+
+[footage]
+# Let Brainrotter download its own background gameplay from YouTube
+# "no copyright / free to use" channels. See the ToS note in the README.
+allow_youtube = true
+max_resolution = 480          # background gets cropped + captioned over; keep low
+seconds_per_clip = 120        # only the first N seconds of each source are pulled
+per_category = 2              # keep this many source videos per category
+auto_sync = true              # fetch on demand when a category is empty
+sync_budget_seconds = 150     # give up a sync after this long
+# YouTube gates most downloads behind a login. Best option: export a Netscape
+# cookies.txt for youtube.com (Chrome/Edge extension "Get cookies.txt LOCALLY")
+# and drop it at assets/cookies.txt — it's picked up automatically. Or set a path:
+cookies_file = ""
+# Fallback: read cookies live from a browser ("chrome"/"edge"/"brave"/"firefox").
+# You must fully CLOSE that browser first, and Chrome 127+ may still block it.
+cookies_from_browser = ""
+
+[video]
+width = 1080
+height = 1920
+fps = 30
+# Hard ceilings the Director must respect.
+min_seconds = 15
+max_seconds = 90
+
+[tts]
+# edge-tts voice. Try: en-US-AndrewNeural, en-US-BrianNeural, en-US-AnaNeural,
+# en-US-GuyNeural (classic "narrator"), en-US-EmmaNeural.
+voice = "en-US-AndrewNeural"
+rate = "+18%"     # brainrot pacing is fast
+pitch = "+0Hz"
+
+[captions]
+style = "word_pop"        # word_pop | karaoke | block
+font = "Impact"
+font_size = 96
+primary_color = "&H00FFFFFF"     # ASS BGR: white
+outline_color = "&H00000000"     # black
+outline = 6
+max_words_on_screen = 3
+position = "center"       # center | lower_third
+
+[whisper]
+# faster-whisper model for forced alignment. tiny/base are plenty for alignment.
+model = "base"
+device = "auto"           # auto | cpu | cuda
+compute_type = "int8"
+
+[assets]
+backgrounds_dir = "assets/backgrounds"
+music_dir = "assets/music"
+sfx_dir = "assets/sfx"
+music_gain_db = -20.0
+
+[director]
+# How the Director allocates between formats before it has performance data.
+default_weights = { reddit_story = 0.45, ai_brainrot = 0.3, anime_figure = 0.25 }
+# Subreddits mined for the reddit_story format.
+subreddits = ["AmItheAsshole", "tifu", "pettyrevenge", "MaliciousCompliance", "confession"]
+# Explore vs exploit once metrics exist (0 = pure exploit).
+exploration = 0.2
+
+[trends]
+reddit_time_filter = "day"
+reddit_limit = 25

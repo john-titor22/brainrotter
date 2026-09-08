@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Env / secrets
+.env
+config.toml
+assets/cookies.txt
+*cookies*.txt
+
+# Brainrotter working data
+workspace/
+assets/cache/
+assets/backgrounds/**/*.mp4
+assets/backgrounds/**/*.mkv
+assets/backgrounds/**/*.webm
+assets/backgrounds/**/*.mov
+assets/music/*
+assets/sfx/*
+!assets/**/README.md
+!assets/**/.gitkeep
+
+# Models
+*.bin
+*.pt
+*.onnx
+
+# Vendored engine — keep the source, not its bulk or runtime state.
+# resource/ (198MB of fonts + bgm) and test/ are restored by the clone in
+# vendor/README.md, so they stay out of our repo.
+vendor/MoneyPrinterTurbo/config.toml
+vendor/MoneyPrinterTurbo/storage/
+vendor/MoneyPrinterTurbo/models/
+vendor/MoneyPrinterTurbo/.git/
+vendor/MoneyPrinterTurbo/resource/
+vendor/MoneyPrinterTurbo/test/
+vendor/MoneyPrinterTurbo/docs/
+vendor/MoneyPrinterTurbo/*.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
