@@ -28,11 +28,13 @@ _FORMAT_VOICE_TAGS = {
     "reddit_story": ("reddit", "storytime", "hype"),
     "ai_brainrot": ("documentary", "narrator", "ai_brainrot"),
     "anime_figure": ("hype", "narrator"),
+    "object_story": ("storytime", "calm", "narrator"),
 }
 _FORMAT_MUSIC_MOODS = {
     "reddit_story": ("tense", "funny", "hype", "chill"),
     "ai_brainrot": ("eerie", "epic", "tense"),
     "anime_figure": ("epic", "hype", "tense"),
+    "object_story": ("chill", "funny", "tense", "eerie"),
 }
 
 
@@ -159,6 +161,11 @@ _FORMAT_BRIEF = {
                     "shonen-narrator line, e.g. 'They said he was just a "
                     "senator. They were wrong.' Parody of the public persona "
                     "only — no real scandals or private life.",
+    "object_story": "a first-person monologue spoken BY an everyday object about "
+                    "its own mundane life. The hook is the object's dry, "
+                    "world-weary opening line, e.g. 'Nobody's driven me in "
+                    "three weeks.' or 'I'm the last one in the bowl and I know "
+                    "how this ends.'",
 }
 
 
@@ -199,6 +206,8 @@ def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None,
         return "documentary reveal of an absurd creature", f"Deep in the archives, they found {topic}."
     if fmt_id == "anime_figure":
         return "recast as an over-the-top anime protagonist", f"They said {topic} was just a normal person. They were wrong."
+    if fmt_id == "object_story":
+        return "the object narrates its own mundane life, deadpan", f"So I'm {topic}, and today everything changed."
     return "escalating first-person conflict with a payoff", f"I never thought {topic} would blow up like this."
 
 

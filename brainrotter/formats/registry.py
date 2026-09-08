@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from . import ai_brainrot, anime_figure, reddit_story
+from . import ai_brainrot, anime_figure, object_story, reddit_story
 
-_MODULES: list[ModuleType] = [reddit_story, ai_brainrot, anime_figure]
+_MODULES: list[ModuleType] = [reddit_story, ai_brainrot, anime_figure, object_story]
 _BY_ID: dict[str, ModuleType] = {m.ID: m for m in _MODULES}
 
 

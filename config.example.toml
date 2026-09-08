@@ -111,7 +111,7 @@ top_fraction = 0.55      # share of the 1080x1920 frame the talking head fills
 
 [director]
 # How the Director allocates between formats before it has performance data.
-default_weights = { reddit_story = 0.45, ai_brainrot = 0.3, anime_figure = 0.25 }
+default_weights = { reddit_story = 0.38, ai_brainrot = 0.25, anime_figure = 0.2, object_story = 0.17 }
 # Subreddits mined for the reddit_story format.
 subreddits = ["AmItheAsshole", "tifu", "pettyrevenge", "MaliciousCompliance", "confession"]
 # Explore vs exploit once metrics exist (0 = pure exploit).

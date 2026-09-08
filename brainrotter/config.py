@@ -135,7 +135,8 @@ class AssetsCfg(BaseModel):
 class DirectorCfg(BaseModel):
     default_weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "reddit_story": 0.45, "ai_brainrot": 0.3, "anime_figure": 0.25,
+            "reddit_story": 0.38, "ai_brainrot": 0.25,
+            "anime_figure": 0.2, "object_story": 0.17,
         }
     )
     subreddits: list[str] = Field(

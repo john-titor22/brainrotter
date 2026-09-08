@@ -28,6 +28,23 @@ _BANK: list[tuple[str, list[str], float, str]] = [
     ("the last Blockbuster on the moon", ["ai_brainrot", "reddit_story"], 0.7, "topic"),
 ]
 
+# Everyday objects for the object_story format — the thing narrates its own life.
+_OBJECTS: list[str] = [
+    "a used car on a dealership lot", "the last banana in the bowl",
+    "an office vending machine", "a single sock behind the dryer",
+    "a shopping cart with one bad wheel", "a traffic cone on the highway",
+    "a microwave in a shared kitchen", "a house plant nobody waters",
+    "a rubber duck on a bathtub ledge", "a gas station hot dog roller",
+    "an umbrella left on the train", "a mattress leaning against a dumpster",
+    "the office printer", "a wedding cake at 2am", "a passport in a drawer",
+    "a Roomba under the couch", "a lemon in a bowl of oranges",
+    "a parking meter downtown", "an air fryer on the counter",
+    "a childhood teddy bear in the attic",
+]
+
+for _obj in _OBJECTS:
+    _BANK.append((_obj, ["object_story"], 0.8, "object"))
+
 # Public figures for the anime_figure format — recognizable, meme-friendly,
 # safe to parody as a "public persona".
 _FIGURES: list[str] = [
