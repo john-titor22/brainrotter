@@ -170,9 +170,11 @@ def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None,
                 )
                 if language == "ary":
                     lang_line = (
-                        "\nWrite the \"hook\" in Moroccan Darija using Arabic "
-                        "script — the way people actually speak it, not Modern "
-                        "Standard Arabic. Keep \"angle\" in English."
+                        "\nWrite the \"hook\" in Moroccan Darija, Arabic script, "
+                        "the way people actually speak in the street — NOT Modern "
+                        "Standard Arabic. Use Darija words (كاين، ديال، بزاف، "
+                        "دابا، غادي، راه، بحال) not fus-ha (يوجد، الذي، جداً، سوف). "
+                        "Keep \"angle\" in English."
                     )
             data = llm.complete_json(
                 "You are a short-form video strategist. Given a topic and format, "

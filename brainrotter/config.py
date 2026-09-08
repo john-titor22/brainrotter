@@ -37,6 +37,10 @@ class LanguageCfg(BaseModel):
     # en (English), fr (French), ar (Modern Standard Arabic), ary (Moroccan
     # Darija — written by the LLM in Arabic script, spoken by the ar-MA voice).
     weights: dict[str, float] = Field(default_factory=lambda: {"en": 1.0})
+    # Darija-only: run a second LLM pass that rewrites the script into pure
+    # street Darija (local models drift back to MSA on "epic" register). Costs
+    # one extra fast call per ary video.
+    darija_polish: bool = True
 
     @property
     def enabled(self) -> list[str]:

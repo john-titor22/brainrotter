@@ -6,8 +6,10 @@ stub so the rest of the pipeline stays testable.
 
 from __future__ import annotations
 
+import json
 import textwrap
 
+from ..config import get_settings
 from ..formats import registry
 from ..models import Brief, Script, ScriptBeat
 from . import llm
@@ -29,9 +31,16 @@ _LANGUAGE_DIRECTIVE = {
     ),
     "ary": (
         "اللغة: كتب گاع النص المنطوق (السرد، العنوان، النصوص فالشاشة) "
-        "بالـدارجة المغربية بحال ما كيهضرو بيها الناس فالواقع — ماشي بالعربية "
-        "الفصحى، ماشي ترجمة حرفية. خليها طبيعية، شبابية، وفيها روح. "
-        "استعمل الحروف العربية. خلي مفاتيح JSON بالإنجليزية."
+        "بالدارجة المغربية بحال ما كيهضرو بيها الناس فالزنقة — ماشي بالعربية "
+        "الفصحى، ماشي ترجمة حرفية.\n"
+        "استعمل كلمات الدارجة بحال: كاين، ماكاينش، ديال، ديالي، ديالنا، بزاف، "
+        "دابا، غادي، واخا، بحال، شوية، مزيان، خويا، راه، فين، علاش، كيفاش، بغيت، "
+        "خصني، عندو، فـ، ولا، حيت، ماشي.\n"
+        "بلا ما تستعمل كلمات الفصحى بحال: يوجد، هناك، الذي، جداً، الآن، سوف، "
+        "مثل، أين، لماذا، كيف، أريد، لأن، ليس.\n"
+        "مثال ديال الدارجة: «راه هاد الواحد ماشي بحال الناس. من صغرو كان كيبان "
+        "ليه بلي غادي يولي شي حاجة كبيرة. ولكن الطريق ماكانش ساهل بزاف.»\n"
+        "الحروف عربية. خلي مفاتيح JSON بالإنجليزية."
     ),
 }
 
@@ -51,10 +60,45 @@ def write(brief: Brief) -> Script:
             language=brief.language,
         )
         script = fmt.parse_script(raw)
+        if brief.language == "ary" and get_settings().language.darija_polish:
+            _darija_polish(script)
     else:
         script = _stub_script(brief)
     script.est_seconds = round(len(script.narration_text.split()) / 2.5, 1)
     return script
+
+
+_DARIJA_POLISH_SYS = (
+    "نتا مترجم للدارجة المغربية. كنعطيوك جمل مكتوبة بخليط ديال الفصحى والدارجة، "
+    "وخصك ترجعهم دارجة مغربية صافية بحال ما كيهضرو الناس فالزنقة. بدّل كل كلمة "
+    "فصحى بالمعادلة ديالها فالدارجة (يوجد→كاين، الذي→اللي، جداً→بزاف، الآن→دابا، "
+    "سوف→غادي، مثل→بحال، لأن→حيت، ليس→ماشي، عندما→منين، يمكن→يمكن ليه). خلي "
+    "المعنى كيفما هو وخلي الطول قريب. ما تزيدش شي حاجة."
+)
+
+
+def _darija_polish(script: Script) -> None:
+    """Second pass — local models slip back into MSA on hype/epic register, so
+    rewrite every line into pure street Darija. Best-effort: on any failure or
+    a length mismatch, the original text is kept."""
+    lines = [script.title] + [b.narration for b in script.beats]
+    try:
+        data = llm.complete_json(
+            _DARIJA_POLISH_SYS,
+            "رجّع هاد الجمل دارجة صافية. جاوب بـ JSON: "
+            '{"lines": [...]} بنفس العدد وبنفس الترتيب.\n\n'
+            + json.dumps(lines, ensure_ascii=False),
+            fast=True, max_tokens=2000, language="ary",
+        )
+        out = data.get("lines") or data.get("جمل") or []
+        if isinstance(out, list) and len(out) == len(lines):
+            cleaned = [str(x).strip() for x in out]
+            if all(cleaned):
+                script.title = cleaned[0]
+                for beat, txt in zip(script.beats, cleaned[1:]):
+                    beat.narration = txt
+    except Exception:
+        pass
 
 
 def _stub_script(brief: Brief) -> Script:

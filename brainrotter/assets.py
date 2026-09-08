@@ -21,6 +21,12 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 # engine's concat).
 PLACEHOLDER_CATEGORIES = {"testpattern"}
 
+# "@name" categories are footage OF a specific public figure (speeches,
+# interviews) fetched for the anime_figure format. They are NOT general
+# background gameplay and must never be blended into a normal video — only
+# returned when asked for by that exact category name.
+FIGURE_PREFIX = "@"
+
 
 def _is_clip(p: Path) -> bool:
     # skip download scratch dirs and partials
@@ -61,12 +67,20 @@ def categories() -> list[str]:
 
 
 def has_any() -> bool:
-    return bool(index())
+    return bool(_gameplay_categories(index()))
 
 
 def _real_categories(idx: dict[str, list[Path]]) -> dict[str, list[Path]]:
     real = {c: v for c, v in idx.items() if c not in PLACEHOLDER_CATEGORIES}
     return real or idx  # fall back to placeholders only if that's all there is
+
+
+def _gameplay_categories(idx: dict[str, list[Path]]) -> dict[str, list[Path]]:
+    """Real background gameplay only — no placeholders, no @figure footage."""
+    return {
+        c: v for c, v in idx.items()
+        if c not in PLACEHOLDER_CATEGORIES and not c.startswith(FIGURE_PREFIX)
+    }
 
 
 def _try_fetch(category: str | None, count: int) -> None:
@@ -92,11 +106,18 @@ def pick(category: str | None = None, *, count: int = 1,
     ``brainrotter footage sync``.
     """
     idx = index()
-    real = _real_categories(idx)
 
+    # An explicit "@figure" request is served straight from that category —
+    # this is the only path that ever touches figure footage.
+    if category and category.startswith(FIGURE_PREFIX):
+        pool = list(_real_categories(idx).get(category, []))
+        random.Random(seed).shuffle(pool)
+        return [str(p) for p in pool[: max(1, count)]]
+
+    real = _gameplay_categories(idx)
     if not real and allow_fetch:
         _try_fetch(category, count)
-        real = _real_categories(index())
+        real = _gameplay_categories(index())
     if not real:
         return []
 
