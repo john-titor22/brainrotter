@@ -9,7 +9,15 @@
   Installs any missing prerequisites (Python, git, ffmpeg, Node, Ollama) with
   winget, builds the virtualenv, vendors the render engine, pulls the local
   model, and drops a "Brainrotter" shortcut on your Desktop.
+
+  Flags (for automated / sandbox testing):
+    -NonInteractive   don't wait for keypresses
+    -SkipModel        don't `ollama pull` (the ~5 GB download)
 #>
+param(
+  [switch]$NonInteractive,
+  [switch]$SkipModel
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -17,6 +25,10 @@ Set-Location $root
 
 function Step($m) { Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 function Have($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
+function Pause-Exit($code) {
+  if (-not $NonInteractive) { Read-Host "Press Enter to close" }
+  exit $code
+}
 
 function Refresh-Path {
   $m = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -36,7 +48,7 @@ function Winget-Install($id, $probe) {
 if (-not (Have "winget")) {
   Write-Host "winget is required (App Installer from the Microsoft Store)." -ForegroundColor Red
   Write-Host "Install it, then re-run this script."
-  Read-Host "Press Enter to exit"; exit 1
+  Pause-Exit 1
 }
 
 Step "1/6  prerequisites"
@@ -58,7 +70,7 @@ if (-not $py) {
 }
 if (-not $py) {
   Write-Host "Python not found even after install. Open a NEW terminal and re-run." -ForegroundColor Red
-  Read-Host "Press Enter to exit"; exit 1
+  Pause-Exit 1
 }
 
 Step "2/6  virtualenv"
@@ -74,7 +86,9 @@ Step "4/6  render engine + config + shortcut"
 & $vpy -m brainrotter.cli setup
 
 Step "5/6  local model  (llama3.1:8b, ~5 GB download)"
-if (Have "ollama") {
+if ($SkipModel) {
+  Write-Host "  skipped (-SkipModel). Run later:  ollama pull llama3.1:8b"
+} elseif (Have "ollama") {
   try { ollama pull llama3.1:8b } catch { Write-Host "  ollama pull failed - run 'ollama pull llama3.1:8b' later." }
 } else {
   Write-Host "  Ollama not on PATH yet. Open a new terminal and run: ollama pull llama3.1:8b"
@@ -97,4 +111,4 @@ One manual step for background footage from YouTube:
 Open it: double-click the "Brainrotter" shortcut on your Desktop.
 --------------------------------------------------------------------
 "@ -ForegroundColor Green
-Read-Host "Press Enter to close"
+if (-not $NonInteractive) { Read-Host "Press Enter to close" }
