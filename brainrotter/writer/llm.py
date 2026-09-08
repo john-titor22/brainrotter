@@ -93,22 +93,25 @@ def multilingual_status() -> str:
 
 def complete_text(system: str, user: str, *, fast: bool = False,
                   max_tokens: int = 3000, json_mode: bool = False,
-                  language: str = "en") -> str:
+                  language: str = "en", temperature: float | None = None) -> str:
     s = get_settings().writer
     p = provider()
     if p == "ollama":
         return _ollama_chat(system, user, fast=fast, max_tokens=max_tokens,
-                            json_mode=json_mode, language=language)
+                            json_mode=json_mode, language=language,
+                            temperature=temperature)
     if p == "anthropic":
         return _anthropic_chat(system, user, fast=fast, max_tokens=max_tokens)
     raise LLMError(f"unknown writer.provider '{s.provider}' (use 'ollama' or 'anthropic')")
 
 
 def complete_json(system: str, user: str, *, fast: bool = False,
-                  max_tokens: int = 3000, language: str = "en") -> dict:
+                  max_tokens: int = 3000, language: str = "en",
+                  temperature: float | None = None) -> dict:
     raw = complete_text(
         system + "\n\nReturn a single JSON object and nothing else.",
         user, fast=fast, max_tokens=max_tokens, json_mode=True, language=language,
+        temperature=temperature,
     )
     try:
         return json.loads(raw)
@@ -120,7 +123,8 @@ def complete_json(system: str, user: str, *, fast: bool = False,
 
 
 def _ollama_chat(system: str, user: str, *, fast: bool, max_tokens: int,
-                 json_mode: bool, language: str = "en") -> str:
+                 json_mode: bool, language: str = "en",
+                 temperature: float | None = None) -> str:
     s = get_settings().writer
     model = s.ollama_fast_model if fast else s.ollama_model
     if language != "en" and s.multilingual_model:
@@ -136,7 +140,10 @@ def _ollama_chat(system: str, user: str, *, fast: bool, max_tokens: int,
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "options": {"temperature": s.temperature, "num_predict": max_tokens},
+        "options": {
+            "temperature": s.temperature if temperature is None else temperature,
+            "num_predict": max_tokens,
+        },
     }
     if json_mode:
         body["format"] = "json"

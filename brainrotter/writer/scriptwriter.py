@@ -47,7 +47,17 @@ _LANGUAGE_DIRECTIVE = {
 
 def _localise(system: str, brief: Brief) -> str:
     directive = _LANGUAGE_DIRECTIVE.get(brief.language)
-    return f"{system}\n\n{directive}" if directive else system
+    if not directive:
+        return system
+    if brief.language in ("ar", "ary"):
+        # Aya reliably overshoots length in Arabic; give it a hard word budget
+        # (~2 words/sec of speech) so the TTS lands near target_seconds.
+        cap = max(24, int(brief.target_seconds * 2))
+        directive += (
+            f"\nمهم: المجموع ديال الكلمات فكل beats ما يفوتش {cap} كلمة "
+            f"(الفيديو خاصو يكون قريب {brief.target_seconds} ثانية)."
+        )
+    return f"{system}\n\n{directive}"
 
 
 def write(brief: Brief) -> Script:
@@ -88,7 +98,7 @@ def _darija_polish(script: Script) -> None:
             "رجّع هاد الجمل دارجة صافية. جاوب بـ JSON: "
             '{"lines": [...]} بنفس العدد وبنفس الترتيب.\n\n'
             + json.dumps(lines, ensure_ascii=False),
-            fast=True, max_tokens=2000, language="ary",
+            fast=True, max_tokens=2000, language="ary", temperature=0.3,
         )
         out = data.get("lines") or data.get("جمل") or []
         if isinstance(out, list) and len(out) == len(lines):

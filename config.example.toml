@@ -103,9 +103,10 @@ music_gain_db = -20.0
 # gameplay. Install it with `brainrotter avatar-setup` (~5 GB, one time). Until
 # then anime_figure quietly falls back to downloaded footage of the figure.
 enabled = true
-device = "cuda"          # cuda (GPU, ~1 min/clip) | cpu (slow, many minutes)
+device = "cuda"          # cuda (GPU) | cpu (slow, many minutes)
 preprocess = "full"      # crop | resize | full — "full" keeps the whole photo
-size = 256               # 256 (fast) | 512 (sharper, ~3x slower)
+size = 256               # 256 (fast) | 512 (sharper, ~2x slower)
+enhancer = "gfpgan"      # GFPGAN face restore per frame — sharper but ~3x slower; "" to skip
 top_fraction = 0.55      # share of the 1080x1920 frame the talking head fills
 
 [director]

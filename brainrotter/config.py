@@ -69,6 +69,9 @@ class AvatarCfg(BaseModel):
     device: str = "cuda"           # cuda | cpu
     preprocess: str = "full"       # crop | resize | full  (full keeps the whole photo)
     size: int = 256               # 256 (fast) | 512 (sharper, ~2x slower)
+    # GFPGAN face restoration on every frame — sharper, but roughly triples the
+    # per-video time (≈4 min -> ≈13 min on an 8 GB GPU). "" / "none" to skip it.
+    enhancer: str = "gfpgan"
     top_fraction: float = 0.55     # how much of the 9:16 frame the head fills
 
 

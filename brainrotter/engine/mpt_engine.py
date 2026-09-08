@@ -105,22 +105,29 @@ def render_plan(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None) -
     concat_mode = "random"
     clip_duration = max(2, plan.clip_duration)
 
+    material_names = []
     if plan.portrait and plan.background_source == "local":
         # anime_figure: lip-synced talking head on top, gameplay on the bottom.
-        material_names, voice_preview = _talking_head_material(
-            plan, settings, task_dir, mpt_voice
-        )
-        concat_mode = "sequential"           # the composite must play straight
-        clip_duration = 999                  # ...as one piece, not cut up
-    else:
-        material_names = []
-        if plan.background_source == "local":
+        try:
+            material_names, voice_preview = _talking_head_material(
+                plan, settings, task_dir, mpt_voice
+            )
+            concat_mode = "sequential"       # the composite must play straight
+            clip_duration = 999              # ...as one piece, not cut up
+        except Exception as exc:
+            # SadTalker failed / timed out — don't sink the whole job, fall back
+            # to plain gameplay footage.
+            print(f"[mpt_engine] talking head failed ({exc}); using gameplay only")
+            voice_preview = None
             material_names = _stage_materials(plan.background_clips)
-            if not material_names:
-                raise EngineError(
-                    "no background clips found — drop gameplay loops into "
-                    f"{settings.backgrounds_path} or set background_source='pexels'"
-                )
+
+    if not material_names and plan.background_source == "local":
+        material_names = _stage_materials(plan.background_clips)
+        if not material_names:
+            raise EngineError(
+                "no background clips found — drop gameplay loops into "
+                f"{settings.backgrounds_path} or set background_source='pexels'"
+            )
 
     bgm_name = _stage_bgm(plan.music_file) if plan.music_file else ""
 
@@ -224,33 +231,58 @@ def _compose_split(head: Path, gameplay: list[str], duration: float,
     top_h = (int(h * settings.avatar.top_fraction) // 2) * 2
     bot_h = h - top_h
     out = task_dir / "split.mp4"
+    dur = f"{max(1.0, duration):.2f}"
+
+    # A truncated head clip + `-stream_loop -1` makes ffmpeg spin forever, so
+    # cap every looped input with `-t` and never loop something we can't read.
+    hd = _probe_duration_ff(ff, head)
+    if hd <= 0.3:
+        raise EngineError(f"talking-head clip is unreadable ({head})")
 
     bottom = next((g for g in gameplay if Path(g).is_file()), None)
     if not bottom:
         # no gameplay — just letterbox the head to full frame
-        cmd = [ff, "-y", "-stream_loop", "-1", "-i", str(head), "-t", f"{duration:.2f}",
+        cmd = [ff, "-y", "-stream_loop", "-1", "-t", dur, "-i", str(head),
+               "-t", dur,
                "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30,setsar=1",
                "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(out)]
     else:
         cmd = [
             ff, "-y",
-            "-stream_loop", "-1", "-i", str(head),
-            "-stream_loop", "-1", "-i", str(bottom),
+            "-stream_loop", "-1", "-t", dur, "-i", str(head),
+            "-stream_loop", "-1", "-t", dur, "-i", str(bottom),
             "-filter_complex",
             (f"[0:v]scale={w}:{top_h}:force_original_aspect_ratio=increase,"
              f"crop={w}:{top_h},setsar=1[t];"
              f"[1:v]scale={w}:{bot_h}:force_original_aspect_ratio=increase,"
              f"crop={w}:{bot_h},setsar=1[b];"
              f"[t][b]vstack=inputs=2,fps=30[v]"),
-            "-map", "[v]", "-t", f"{duration:.2f}",
+            "-map", "[v]", "-t", dur,
             "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             str(out),
         ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=600)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
     except subprocess.CalledProcessError as exc:
         raise EngineError(f"split-screen compose failed: {(exc.stderr or '')[-400:]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise EngineError("split-screen compose timed out") from exc
+    if not out.is_file() or out.stat().st_size < 10_000:
+        raise EngineError("split-screen compose produced no output")
     return out
+
+
+def _probe_duration_ff(ff: str, path: Path) -> float:
+    probe = shutil.which("ffprobe") or ff.replace("ffmpeg", "ffprobe")
+    try:
+        r = subprocess.run(
+            [probe, "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=20,
+        )
+        return float(r.stdout.strip() or 0.0)
+    except Exception:
+        return 0.0
 
 
 def _faststart_copy(src: Path, dst: Path) -> None:

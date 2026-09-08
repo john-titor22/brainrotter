@@ -41,8 +41,22 @@ def _to_wav(audio: Path, work: Path) -> Path:
     return wav
 
 
+def _probe_duration(path: Path) -> float:
+    ff = shutil.which(get_settings().ffmpeg_bin) or "ffmpeg"
+    probe = shutil.which("ffprobe") or ff.replace("ffmpeg", "ffprobe")
+    try:
+        out = subprocess.run(
+            [probe, "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        return float(out) if out else 0.0
+    except Exception:
+        return 0.0
+
+
 def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
-                 *, timeout: int = 900) -> Path:
+                 *, timeout: int = 600) -> Path:
     """portrait image + audio -> lip-synced mp4 at out_path."""
     if not is_installed():
         raise AvatarError("SadTalker is not installed - run `brainrotter avatar-setup`")
@@ -55,20 +69,20 @@ def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
     result_dir.mkdir(exist_ok=True)
 
     wav = _to_wav(audio, work)
+    av = settings.avatar
     cmd = [
         str(SADTALKER_PY), "inference.py",
         "--source_image", str(portrait.resolve()),
         "--driven_audio", str(wav.resolve()),
         "--result_dir", str(result_dir.resolve()),
-        "--preprocess", settings.avatar.preprocess,   # crop | resize | full
-        "--size", str(settings.avatar.size),          # 256 | 512
-        "--still",                                     # less head sway, cleaner
-        "--cpu" if settings.avatar.device == "cpu" else "--enhancer", "gfpgan",
+        "--preprocess", av.preprocess,        # crop | resize | full
+        "--size", str(av.size),               # 256 | 512
+        "--still",                            # less head sway, cleaner
     ]
-    if settings.avatar.device != "cpu":
-        cmd = [c for c in cmd if c != "--cpu"]
-    else:
-        cmd = [c for c in cmd if c not in ("--enhancer", "gfpgan")]
+    if av.device == "cpu":
+        cmd.append("--cpu")
+    if av.enhancer and av.enhancer.lower() not in ("none", "off", ""):
+        cmd += ["--enhancer", av.enhancer]    # gfpgan — sharper but ~3x slower
 
     try:
         subprocess.run(cmd, cwd=SADTALKER_DIR, check=True, capture_output=True,
@@ -79,10 +93,17 @@ def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
     except subprocess.TimeoutExpired as exc:
         raise AvatarError(f"SadTalker timed out after {timeout}s") from exc
 
-    mp4s = sorted(result_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime)
-    if not mp4s:
-        raise AvatarError("SadTalker produced no output")
+    # SadTalker leaves scratch files behind (temp_*, *_enhanced partials that can
+    # be truncated). Take a real, non-temp output with a sane duration — the
+    # "_full" one (portrait + audio muxed) when present.
+    cands = [p for p in result_dir.rglob("*.mp4") if not p.name.startswith("temp_")]
+    cands.sort(key=lambda p: (("full" not in p.name), -p.stat().st_mtime))
+    pick = next((p for p in cands if _probe_duration(p) > 0.5), None)
+    if pick is None:
+        raise AvatarError("SadTalker produced no usable output")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(mp4s[-1]), out_path)
+    if out_path.exists():
+        out_path.unlink()
+    shutil.move(str(pick), out_path)
     shutil.rmtree(work, ignore_errors=True)
     return out_path
