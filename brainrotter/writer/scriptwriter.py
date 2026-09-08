@@ -74,8 +74,27 @@ def write(brief: Brief) -> Script:
             _darija_polish(script)
     else:
         script = _stub_script(brief)
+    _trim_to_budget(script, brief)
     script.est_seconds = round(len(script.narration_text.split()) / 2.5, 1)
     return script
+
+
+def _trim_to_budget(script: Script, brief: Brief) -> None:
+    """Models (Aya especially, in Arabic) overshoot the target length, which
+    balloons the clip count and makes the render flakier. Drop trailing beats
+    once we're well past budget — keep at least 3."""
+    # words/sec varies by language; Arabic script "words" are denser
+    wps = 2.0 if brief.language in ("ar", "ary") else 2.6
+    budget_words = int(brief.target_seconds * wps * 1.25)   # 25% slack
+    kept: list = []
+    total = 0
+    for beat in script.beats:
+        n = len(beat.narration.split())
+        if kept and total + n > budget_words and len(kept) >= 3:
+            break
+        kept.append(beat)
+        total += n
+    script.beats = kept
 
 
 _DARIJA_POLISH_SYS = (

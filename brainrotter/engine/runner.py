@@ -29,11 +29,15 @@ def render_isolated(plan: RenderPlan, *, job_id: str, out_dir: Path | None = Non
             if line.startswith(RESULT_MARKER):
                 return json.loads(line[len(RESULT_MARKER):].strip())
 
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-4:]
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
         last = " | ".join(tail)
-        # retry on a hard crash (segfault) OR a flaky MoviePy / OS pipe error
-        flaky = any(s in last for s in ("Errno 22", "MoviePy error", "FFMPEG",
-                                        "Broken pipe", "Invalid argument"))
+        # retry on a hard crash (segfault) OR a flaky MoviePy / ffmpeg / OS error
+        flaky = any(s in last for s in (
+            "Errno 22", "MoviePy error", "FFMPEG", "ffmpeg", "Broken pipe",
+            "Invalid argument", "Auto-inserting", "bitstream filter",
+            "moov atom not found", "Invalid data found", "Conversion failed",
+            "h264_mp4toannexb",
+        ))
         crashed = proc.returncode not in (0, 2)
         if not crashed and not flaky:
             raise EngineError(last or "engine failed")
