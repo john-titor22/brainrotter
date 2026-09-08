@@ -28,7 +28,9 @@ a local dashboard (queue, previews, per-video rationale).
 - **Formats:** `reddit_story` (AITA/revenge readalong), `ai_brainrot` (absurd
   invented creature lore), `anime_figure` (a real public figure recast as an
   anime protagonist — a lip-synced talking head of them narrates it, stacked on
-  gameplay). The Director chooses per video; new formats are one file.
+  gameplay), `object_story` (an everyday object — a car, a banana, a vending
+  machine — narrates its own life, first person). The Director chooses per
+  video; new formats are one file.
 - **Writer:** local LLM via Ollama (`llama3.1:8b`; `aya-expanse:8b` for
   non-English). No key, no egress.
 - **Languages:** the Director picks one per video from `[language]` weights —
