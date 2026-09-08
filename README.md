@@ -124,6 +124,25 @@ The `extension/` toolbar add-on (see `extension/README.md`) is optional — a qu
 queue badge + controls for when you also have a normal browser window open. It
 can't start the server; use the app shortcut for that.
 
+## Give it to someone else
+
+```powershell
+.\pack.ps1        # builds dist\Brainrotter-Setup.zip  (~1.3 MB)
+```
+
+Send them that zip (Drive / WeTransfer / Discord / the GitHub Release). They:
+
+1. unzip it
+2. open the `Brainrotter` folder
+3. right-click **`install.ps1`** → **Run with PowerShell**
+
+`install.ps1` winget-installs Python / git / ffmpeg / Node / Ollama, builds the
+venv, vendors the engine, pulls `llama3.1:8b`, and drops a Desktop shortcut. The
+only thing it can't automate is the YouTube `cookies.txt` (it prints how).
+
+> The repo is private, so the GitHub Release download link only works for people
+> you've given repo access. A file-share link works for anyone.
+
 ## Notes
 
 - **No API keys.** Everything runs locally. `writer.provider = "anthropic"` in
