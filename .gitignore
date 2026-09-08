@@ -39,7 +39,10 @@ vendor/MoneyPrinterTurbo/config.toml
 vendor/MoneyPrinterTurbo/storage/
 vendor/MoneyPrinterTurbo/models/
 vendor/MoneyPrinterTurbo/.git/
-vendor/MoneyPrinterTurbo/resource/
+vendor/MoneyPrinterTurbo/resource/*
+!vendor/MoneyPrinterTurbo/resource/fonts/
+vendor/MoneyPrinterTurbo/resource/fonts/*
+!vendor/MoneyPrinterTurbo/resource/fonts/BeVietnamPro-Bold.ttf
 vendor/MoneyPrinterTurbo/test/
 vendor/MoneyPrinterTurbo/docs/
 vendor/MoneyPrinterTurbo/*.lock

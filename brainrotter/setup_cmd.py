@@ -18,37 +18,28 @@ def _step(msg: str) -> None:
     print(f"  {msg}")
 
 
+CAPTION_FONT = ENGINE_DIR / "resource" / "fonts" / "BeVietnamPro-Bold.ttf"
+
+
 def vendor_engine() -> bool:
     have_code = (ENGINE_DIR / "app" / "services" / "task.py").is_file()
-    have_resources = (ENGINE_DIR / "resource" / "fonts").is_dir() and any(
-        (ENGINE_DIR / "resource" / "songs").glob("*.mp3")
-    ) if (ENGINE_DIR / "resource").is_dir() else False
+    # the caption font is the only runtime resource we can't render without;
+    # it's ~139 KB and bundled in the repo. Background music is optional.
+    have_font = CAPTION_FONT.is_file()
 
-    if have_code and have_resources:
+    if have_code and have_font:
         _step("engine already vendored.")
+        _maybe_fetch_music()
         return True
 
     if not shutil.which("git"):
         _step("git not found - can't fetch the engine. Install git and rerun.")
         return False
 
-    if have_code and not have_resources:
-        # code is bundled (from the zip) but runtime fonts/music are gitignored —
-        # fetch just those from a shallow clone.
-        _step("fetching engine resources (fonts + music) ...")
-        with tempfile.TemporaryDirectory() as td:
-            r = subprocess.run(["git", "clone", "--depth", "1", "--filter=blob:none",
-                                "--sparse", MPT_REPO, td])
-            if r.returncode != 0:
-                r = subprocess.run(["git", "clone", "--depth", "1", MPT_REPO, td])
-            if r.returncode != 0:
-                return False
-            subprocess.run(["git", "-C", td, "sparse-checkout", "set", "resource"],
-                           capture_output=True)
-            src = Path(td) / "resource"
-            if src.is_dir():
-                shutil.copytree(src, ENGINE_DIR / "resource", dirs_exist_ok=True)
-        return (ENGINE_DIR / "resource" / "fonts").is_dir()
+    if have_code and not have_font:
+        _step("fetching the caption font ...")
+        _sparse_fetch(["resource/fonts"])
+        return CAPTION_FONT.is_file()
 
     ENGINE_DIR.parent.mkdir(parents=True, exist_ok=True)
     _step(f"cloning MoneyPrinterTurbo into {ENGINE_DIR.relative_to(PROJECT_ROOT)} ...")
@@ -57,6 +48,36 @@ def vendor_engine() -> bool:
         return False
     shutil.rmtree(ENGINE_DIR / ".git", ignore_errors=True)
     return True
+
+
+def _maybe_fetch_music() -> None:
+    """Background music is optional. Grab it once if the user has nothing else."""
+    songs = ENGINE_DIR / "resource" / "songs"
+    have_music = (songs.is_dir() and any(songs.glob("*.mp3"))) or any(
+        (PROJECT_ROOT / "assets" / "music").glob("*")
+    )
+    if have_music or not shutil.which("git"):
+        return
+    _step("fetching background music (~56 MB, optional - Ctrl+C to skip) ...")
+    try:
+        _sparse_fetch(["resource/songs"])
+    except KeyboardInterrupt:
+        _step("skipped music. Drop your own MP3s into assets/music/ any time.")
+
+
+def _sparse_fetch(paths: list[str]) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        clone = ["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
+                 MPT_REPO, td]
+        if subprocess.run(clone).returncode != 0:
+            if subprocess.run(["git", "clone", "--depth", "1", MPT_REPO, td]).returncode != 0:
+                return
+        subprocess.run(["git", "-C", td, "sparse-checkout", "set", *paths],
+                       capture_output=True)
+        for p in paths:
+            src = Path(td) / p
+            if src.is_dir():
+                shutil.copytree(src, ENGINE_DIR / p, dirs_exist_ok=True)
 
 
 def make_configs() -> None:
