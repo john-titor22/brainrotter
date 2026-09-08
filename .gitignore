@@ -18,6 +18,8 @@ assets/cookies.txt
 workspace/
 assets/cache/
 dist/
+tools/sadtalker/
+assets/portraits/
 assets/backgrounds/**/*.mp4
 assets/backgrounds/**/*.mkv
 assets/backgrounds/**/*.webm

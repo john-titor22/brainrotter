@@ -27,7 +27,8 @@ a local dashboard (queue, previews, per-video rationale).
 
 - **Formats:** `reddit_story` (AITA/revenge readalong), `ai_brainrot` (absurd
   invented creature lore), `anime_figure` (a real public figure recast as an
-  anime protagonist). The Director chooses per video; new formats are one file.
+  anime protagonist — a lip-synced talking head of them narrates it, stacked on
+  gameplay). The Director chooses per video; new formats are one file.
 - **Writer:** local LLM via Ollama (`llama3.1:8b`). No key, no egress.
 - **Voice:** `edge-tts` (free Microsoft neural voices).
 - **Footage:** self-sourced with `yt-dlp` — "no copyright" gameplay for most
@@ -56,6 +57,9 @@ winget install Ollama.Ollama
 ollama pull llama3.1:8b
 
 .venv\Scripts\brainrotter doctor       # check what's missing
+
+# optional: talking-head figures for anime_figure (big one-time download)
+.venv\Scripts\brainrotter avatar-setup
 ```
 
 Then get background footage (see the Footage note below for the one-time cookie
@@ -92,9 +96,12 @@ CLI, if you prefer: `brainrotter run` (Director decides) or
 > throttles); they cache and get reused, so it's a one-time cost per game.
 > `brainrotter footage sync` up front (or overnight) to fill the pool.
 >
-> **`anime_figure`** pulls clips *of the figure* (speeches, interviews) on demand
-> the first time that person is used, and falls back to gameplay if the download
-> fails. Same ToS caveat applies.
+> **`anime_figure`** generates a lip-synced talking head of the figure narrating
+> the script (SadTalker, run locally) and stacks it on top of gameplay — top
+> figure, bottom gameplay, a fresh render every video. Install it once with
+> `brainrotter avatar-setup` (~5 GB: a CUDA PyTorch + ~2 GB of checkpoints).
+> Without it, the format falls back to downloaded footage *of the figure*
+> (speeches, interviews) over gameplay. Same ToS caveat applies to both.
 
 **Background variety.** The Director picks 1–2 games per video from a pool of
 ~12 (subway, parkour, GTA, Temple Run, Trackmania, Geometry Dash, slope, Roblox

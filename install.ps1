@@ -108,6 +108,9 @@ One manual step for background footage from YouTube:
         $root\assets\cookies.txt
   3. Then:  .\.venv\Scripts\brainrotter footage sync
 
+Optional - talking-head figures for the anime_figure format (~5 GB):
+  .\.venv\Scripts\brainrotter avatar-setup
+
 Open it: double-click the "Brainrotter" shortcut on your Desktop.
 --------------------------------------------------------------------
 "@ -ForegroundColor Green

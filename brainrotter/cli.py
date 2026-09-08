@@ -186,6 +186,10 @@ def doctor():
     check(f"Writer ({llm.provider()}) usable", llm.available(),
           "ollama pull llama3.1:8b  (or set writer.provider) — stub writer used otherwise")
     check("yt-dlp installed (footage)", _has("yt_dlp"), "pip install 'yt-dlp[default]'")
+    from . import avatar
+    console.print(f"  [dim]anime_figure:[/] "
+                  + ("talking-head ready (SadTalker)" if avatar.is_installed()
+                     else "footage mode — `brainrotter avatar-setup` for talking heads"))
     cookie = Path(s.footage.cookies_file) if s.footage.cookies_file else s.root / "assets" / "cookies.txt"
     if s.footage.allow_youtube:
         check("JS runtime for YouTube (node/deno)",
@@ -260,6 +264,14 @@ def install_shortcut_cmd():
     from . import setup_cmd as _s
 
     _s.install_shortcut()
+
+
+@app.command("avatar-setup")
+def avatar_setup_cmd():
+    """Install SadTalker (talking-head generation for anime_figure). Big download."""
+    from .avatar import setup as _a
+
+    raise typer.Exit(_a.run())
 
 
 @app.command()

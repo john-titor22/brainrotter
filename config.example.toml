@@ -71,6 +71,17 @@ music_dir = "assets/music"
 sfx_dir = "assets/sfx"
 music_gain_db = -20.0
 
+[avatar]
+# Talking-head generation for the anime_figure format. Runs SadTalker locally to
+# lip-sync a photo of the public figure to the narration, stacked on top of
+# gameplay. Install it with `brainrotter avatar-setup` (~5 GB, one time). Until
+# then anime_figure quietly falls back to downloaded footage of the figure.
+enabled = true
+device = "cuda"          # cuda (GPU, ~1 min/clip) | cpu (slow, many minutes)
+preprocess = "full"      # crop | resize | full — "full" keeps the whole photo
+size = 256               # 256 (fast) | 512 (sharper, ~3x slower)
+top_fraction = 0.55      # share of the 1080x1920 frame the talking head fills
+
 [director]
 # How the Director allocates between formats before it has performance data.
 default_weights = { reddit_story = 0.45, ai_brainrot = 0.3, anime_figure = 0.25 }

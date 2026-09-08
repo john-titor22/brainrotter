@@ -102,6 +102,10 @@ class RenderPlan(BaseModel):
     music: str = "random"               # "random" | "" (none) | filename in songs dir
     music_volume: float = 0.16
     aspect: str = "9:16"
+    # Optional: a talking-head video (lip-synced to the narration). When set, the
+    # engine stacks it on top of the gameplay clips (top ~55% / bottom ~45%).
+    talking_head: str | None = None
+    portrait: str | None = None          # source photo used for the talking head
 
 
 class VideoResult(BaseModel):

@@ -28,6 +28,16 @@ class WriterCfg(BaseModel):
     temperature: float = 0.95           # brainrot rewards creativity over precision
 
 
+class AvatarCfg(BaseModel):
+    # Talking-head (SadTalker) for anime_figure. Off until `brainrotter
+    # avatar-setup` has installed it; falls back to plain footage otherwise.
+    enabled: bool = True
+    device: str = "cuda"           # cuda | cpu
+    preprocess: str = "full"       # crop | resize | full  (full keeps the whole photo)
+    size: int = 256               # 256 (fast) | 512 (sharper, ~2x slower)
+    top_fraction: float = 0.55     # how much of the 9:16 frame the head fills
+
+
 class FootageCfg(BaseModel):
     # Let Brainrotter download its own background footage from YouTube
     # "no copyright / free to use" gameplay channels. See docs for the ToS note.
@@ -112,6 +122,7 @@ class Settings(BaseModel):
     out_dir: str = "workspace/out"
     writer: WriterCfg = WriterCfg()
     footage: FootageCfg = FootageCfg()
+    avatar: AvatarCfg = AvatarCfg()
     video: VideoCfg = VideoCfg()
     tts: TtsCfg = TtsCfg()
     captions: CaptionsCfg = CaptionsCfg()

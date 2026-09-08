@@ -18,11 +18,12 @@ from ..models import Brief, CaptionStyle, RenderPlan, Script, ScriptBeat
 from .base import common_json_rules
 
 ID = "anime_figure"
-NAME = "Anime Figure Brainrot"
-DESCRIPTION = "A real public figure narrated as an over-the-top anime protagonist."
+NAME = "Figure Brainrot"
+DESCRIPTION = "A real public figure recast as an anime protagonist and narrating it themselves."
 SIGNAL_KINDS = ["figure", "topic", "meme"]
-# Background = footage OF the figure (speeches / interviews); these gameplay
-# categories are only the fallback when that download fails.
+# The Director resolves a photo of the figure; the engine lip-syncs it to the
+# narration (SadTalker) and stacks it on top of gameplay. Without SadTalker
+# installed it falls back to downloaded footage of the figure, then gameplay.
 USES_FIGURE_FOOTAGE = True
 BG_CATEGORIES = ["subway", "parkour", "surf", "geometry_dash", "satisfying", "trackmania"]
 

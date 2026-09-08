@@ -63,16 +63,30 @@ def produce(brief: Brief, *, job_id: str | None = None,
         )
         seed = hash(job_id) & 0xFFFF
         clips: list[str] = []
-        if getattr(fmt, "USES_FIGURE_FOOTAGE", False) and brief.topic:
-            from . import footage
+        portrait: str | None = None
 
-            try:
-                clips = footage.ensure_figure(brief.topic, count=3)
-            except Exception:
-                clips = []
+        if getattr(fmt, "USES_FIGURE_FOOTAGE", False) and brief.topic:
+            from . import avatar, footage
+
+            if avatar.available():
+                try:
+                    portrait = avatar.get_portrait(brief.topic)
+                except Exception:
+                    portrait = None
+            if not portrait:
+                # no talking head — use footage OF the figure
+                try:
+                    clips = footage.ensure_figure(brief.topic, count=3)
+                except Exception:
+                    clips = []
+
         if not clips:
+            # gameplay: talking head sits on top of it, or it's the whole bg
             clips = assets.pick_mixed(cats, count=3, seed=seed)
+
         plan = fmt.build_plan(brief, script, clips)
+        if portrait:
+            plan.portrait = portrait
 
         db.update_job(job_id, state=JobState.RENDERING.value)
         t = time.time()
