@@ -52,7 +52,7 @@ def _localise(system: str, brief: Brief) -> str:
     if brief.language in ("ar", "ary"):
         # Aya reliably overshoots length in Arabic; give it a hard word budget
         # (~2 words/sec of speech) so the TTS lands near target_seconds.
-        cap = max(24, int(brief.target_seconds * 2))
+        cap = max(20, int(brief.target_seconds * 1.6))
         directive += (
             f"\nمهم: المجموع ديال الكلمات فكل beats ما يفوتش {cap} كلمة "
             f"(الفيديو خاصو يكون قريب {brief.target_seconds} ثانية)."

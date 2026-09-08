@@ -88,6 +88,9 @@ def produce(brief: Brief, *, job_id: str | None = None,
         plan = fmt.build_plan(brief, script, clips)
         if portrait:
             plan.portrait = portrait
+            # talking head fills the top ~55%; keep captions in the gameplay
+            # half so they don't land on the seam.
+            plan.caption.position = "bottom"
 
         # Resolve the Director's music mood to an actual track — downloading a
         # few for that mood on first use (cached after), like footage.
