@@ -8,9 +8,8 @@ runs over abstract / satisfying background footage.
 
 from __future__ import annotations
 
-from ..engine import voices
 from ..models import Brief, CaptionStyle, RenderPlan, Script, ScriptBeat
-from .base import common_json_rules
+from .base import common_json_rules, finalize_plan, resolve_voice
 
 ID = "ai_brainrot"
 NAME = "AI Brainrot Lore"
@@ -62,14 +61,18 @@ def parse_script(raw: dict) -> Script:
     )
 
 
+VOICE_TAGS = ("documentary", "narrator", "ai_brainrot")
+MUSIC_MOODS = ("eerie", "epic", "tense")
+
+
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:
     style = brief.style or {}
-    voice = voices.get(style.get("voice") or voices.for_tags("documentary", "narrator").name)
-    return RenderPlan(
+    voice = resolve_voice(style, brief, *VOICE_TAGS)
+    plan = RenderPlan(
         subject=script.title or brief.topic,
         script_text=script.narration_text,
         voice_name=voice.name,
-        voice_rate=float(style.get("voice_rate", 1.08)),
+        voice_rate=float(style.get("voice_rate", voice.default_rate)),
         background_clips=background_clips,
         background_source="local" if background_clips else "pexels",
         clip_duration=int(style.get("clip_duration", 4)),
@@ -82,3 +85,4 @@ def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> Ren
         music=style.get("music", "random"),
         music_volume=float(style.get("music_volume", 0.18)),
     )
+    return finalize_plan(plan, brief, style)

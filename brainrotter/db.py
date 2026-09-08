@@ -300,21 +300,61 @@ def format_stats() -> dict[str, dict]:
     return {r["format_id"]: dict(r) for r in rows}
 
 
-def recent_background_categories(limit: int = 6) -> list[str]:
-    """Background categories from the most recent jobs, newest first."""
-    out: list[str] = []
+def _recent_briefs(limit: int) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             "SELECT brief_json FROM jobs WHERE brief_json IS NOT NULL "
             "ORDER BY created_at DESC LIMIT ?", (limit,)
         ).fetchall()
+    out = []
     for r in rows:
         try:
-            style = json.loads(r["brief_json"]).get("style", {}) or {}
+            out.append(json.loads(r["brief_json"]))
         except Exception:
             continue
+    return out
+
+
+def recent_background_categories(limit: int = 6) -> list[str]:
+    """Background categories from the most recent jobs, newest first."""
+    out: list[str] = []
+    for brief in _recent_briefs(limit):
+        style = brief.get("style", {}) or {}
         cats = style.get("background_categories") or (
             [style["background_category"]] if style.get("background_category") else []
         )
         out.extend(c for c in cats if c)
+    return out
+
+
+def _recent_style_field(field: str, limit: int) -> list[str]:
+    out: list[str] = []
+    for brief in _recent_briefs(limit):
+        v = (brief.get("style", {}) or {}).get(field)
+        if v:
+            out.append(str(v))
+    return out
+
+
+def recent_voices(limit: int = 5) -> list[str]:
+    return _recent_style_field("voice", limit)
+
+
+def recent_music(limit: int = 8) -> list[str]:
+    """Basenames of recently-used music files, newest first."""
+    import os
+
+    return [os.path.basename(p) for p in _recent_style_field("music_file", limit)]
+
+
+def recent_music_moods(limit: int = 5) -> list[str]:
+    return _recent_style_field("music_mood", limit)
+
+
+def recent_languages(limit: int = 6) -> list[str]:
+    out: list[str] = []
+    for brief in _recent_briefs(limit):
+        v = brief.get("language")
+        if v:
+            out.append(str(v))
     return out

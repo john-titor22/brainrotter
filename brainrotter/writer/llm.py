@@ -69,23 +69,46 @@ def _ollama_models() -> list[str]:
     return [m["name"] for m in r.json().get("models", [])]
 
 
+def _ollama_models_safe() -> list[str]:
+    try:
+        return _ollama_models()
+    except Exception:
+        return []
+
+
+def multilingual_status() -> str:
+    """For `doctor` — is the non-English writer model available?"""
+    s = get_settings().writer
+    if s.provider.lower() == "anthropic":
+        return "Claude handles all languages"
+    ml = s.multilingual_model
+    if not ml:
+        return f"none configured — non-English uses {s.ollama_model} (weak outside English)"
+    if ml in _ollama_models_safe():
+        return f"{ml} ready"
+    return f"'{ml}' not pulled — `ollama pull {ml}` (falls back to {s.ollama_model})"
+
+
 # --- completion ------------------------------------------------------------
 
 def complete_text(system: str, user: str, *, fast: bool = False,
-                  max_tokens: int = 3000, json_mode: bool = False) -> str:
+                  max_tokens: int = 3000, json_mode: bool = False,
+                  language: str = "en") -> str:
     s = get_settings().writer
     p = provider()
     if p == "ollama":
-        return _ollama_chat(system, user, fast=fast, max_tokens=max_tokens, json_mode=json_mode)
+        return _ollama_chat(system, user, fast=fast, max_tokens=max_tokens,
+                            json_mode=json_mode, language=language)
     if p == "anthropic":
         return _anthropic_chat(system, user, fast=fast, max_tokens=max_tokens)
     raise LLMError(f"unknown writer.provider '{s.provider}' (use 'ollama' or 'anthropic')")
 
 
-def complete_json(system: str, user: str, *, fast: bool = False, max_tokens: int = 3000) -> dict:
+def complete_json(system: str, user: str, *, fast: bool = False,
+                  max_tokens: int = 3000, language: str = "en") -> dict:
     raw = complete_text(
         system + "\n\nReturn a single JSON object and nothing else.",
-        user, fast=fast, max_tokens=max_tokens, json_mode=True,
+        user, fast=fast, max_tokens=max_tokens, json_mode=True, language=language,
     )
     try:
         return json.loads(raw)
@@ -96,9 +119,16 @@ def complete_json(system: str, user: str, *, fast: bool = False, max_tokens: int
         return json.loads(m.group(0))
 
 
-def _ollama_chat(system: str, user: str, *, fast: bool, max_tokens: int, json_mode: bool) -> str:
+def _ollama_chat(system: str, user: str, *, fast: bool, max_tokens: int,
+                 json_mode: bool, language: str = "en") -> str:
     s = get_settings().writer
     model = s.ollama_fast_model if fast else s.ollama_model
+    if language != "en" and s.multilingual_model:
+        # Aya (or whatever's configured) writes French/Arabic/Darija far better
+        # than llama3.1. Use it when it's actually pulled, else stick with the
+        # default and let the prompt do its best.
+        if s.multilingual_model in _ollama_models_safe():
+            model = s.multilingual_model
     body = {
         "model": model,
         "stream": False,

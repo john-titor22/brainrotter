@@ -30,6 +30,8 @@ console = Console()
 def run(
     format: str = typer.Option(None, "--format", "-f", help="Force a format id."),
     topic: str = typer.Option(None, "--topic", "-t", help="Force a topic."),
+    language: str = typer.Option(None, "--language", "-l",
+                                 help="Force a language: en | fr | ar | ary (Darija)."),
     count: int = typer.Option(1, "--count", "-n", help="How many videos."),
     seed: int = typer.Option(None, help="Deterministic seed."),
     publish: str = typer.Option(None, help="Comma-separated platforms to publish to."),
@@ -47,7 +49,7 @@ def run(
         console.rule(f"[bold]job {i + 1}/{count}")
         try:
             res = orchestrator.run_once(
-                format_id=format, topic=topic,
+                format_id=format, topic=topic, language=language,
                 seed=(seed + i if seed is not None else None),
                 publish_to=platforms,
             )
@@ -185,7 +187,27 @@ def doctor():
     console.print(f"  [dim]Writer:[/] {llm.status()}")
     check(f"Writer ({llm.provider()}) usable", llm.available(),
           "ollama pull llama3.1:8b  (or set writer.provider) — stub writer used otherwise")
-    check("yt-dlp installed (footage)", _has("yt_dlp"), "pip install 'yt-dlp[default]'")
+    langs = s.language.enabled
+    if langs != ["en"]:
+        console.print(f"  [dim]Languages:[/] {', '.join(langs)}   "
+                      f"[dim]non-English writer:[/] {llm.multilingual_status()}")
+    check("yt-dlp installed (footage / music)", _has("yt_dlp"), "pip install 'yt-dlp[default]'")
+    if any(l in ("ar", "ary") for l in langs):
+        from .formats.base import RTL_CAPTION_FONT
+
+        rtl_ok = (ENGINE_ROOT / "resource" / "fonts" / RTL_CAPTION_FONT).is_file()
+        check(f"Arabic caption font ({RTL_CAPTION_FONT})", rtl_ok,
+              "run `brainrotter setup` to restore bundled fonts")
+        check("RTL caption shaping (arabic-reshaper, python-bidi)",
+              _has("arabic_reshaper") and _has("bidi"),
+              "pip install arabic-reshaper python-bidi")
+    if s.music.enabled:
+        from . import music as _music
+
+        n_music = sum(len(_music.library(m)) for m in _music.moods())
+        console.print(f"  [dim]Music:[/] {n_music} track(s) across "
+                      f"{len(_music.moods())} moods"
+                      + ("  — `brainrotter music sync` to fill" if n_music < 3 else ""))
     from . import avatar
     console.print(f"  [dim]anime_figure:[/] "
                   + ("talking-head ready (SadTalker)" if avatar.is_installed()
@@ -248,6 +270,45 @@ def footage_list():
         src = "downloaded" if n_dl == len(clips) else ("mixed" if n_dl else "manual")
         t.add_row(cat, str(len(clips)), src)
     console.print(t)
+
+
+music_app = typer.Typer(help="Manage self-sourced, mood-tagged background music.")
+app.add_typer(music_app, name="music")
+
+
+@music_app.command("sync")
+def music_sync(
+    mood: str = typer.Option(None, "--mood", "-m", help="One mood, or all."),
+    count: int = typer.Option(None, "--count", "-n"),
+):
+    """Download 'no copyright' background tracks with yt-dlp, tagged by mood."""
+    from . import music
+
+    moods = [mood] if mood else music.moods()
+    for m in moods:
+        console.print(f"[cyan]{m}[/] …", end=" ")
+        try:
+            got = music.sync(m, count=count)
+            console.print(f"[green]+{len(got)}[/]")
+        except Exception as exc:
+            console.print(f"[red]{exc}[/]")
+
+
+@music_app.command("list")
+def music_list():
+    """Show the music library by mood."""
+    from . import music
+
+    t = Table("mood", "tracks")
+    total = 0
+    for m in music.moods():
+        n = len(music.library(m))
+        total += n
+        t.add_row(m, str(n))
+    console.print(t)
+    if not total:
+        console.print("[dim]empty — `brainrotter music sync` or drop MP3s in "
+                      "assets/music/<mood>/[/]")
 
 
 @app.command("setup")

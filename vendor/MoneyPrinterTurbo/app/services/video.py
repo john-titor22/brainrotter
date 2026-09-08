@@ -28,6 +28,35 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.config import config
 from app.models import const
+
+# --- Brainrotter patch: RTL (Arabic / Darija) caption shaping ---------------
+# Pillow/MoviePy draw text left-to-right with unconnected glyphs, which breaks
+# Arabic-script captions. Reshape (letter joining) + apply the bidi algorithm
+# before the text reaches TextClip. No-op for non-Arabic text.
+_ARABIC_RANGE = tuple(
+    (a, b) for a, b in [
+        (0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),
+        (0xFB50, 0xFDFF), (0xFE70, 0xFEFF),
+    ]
+)
+
+
+def _has_arabic(text: str) -> bool:
+    return any(any(a <= ord(ch) <= b for a, b in _ARABIC_RANGE) for ch in text or "")
+
+
+def shape_rtl_text(text: str) -> str:
+    if not text or not _has_arabic(text):
+        return text
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+
+        return get_display(arabic_reshaper.reshape(text))
+    except Exception as exc:  # pragma: no cover - only if optional deps missing
+        logger.warning(f"RTL caption shaping unavailable: {exc}")
+        return text
+# --- end Brainrotter patch ------------------------------------------------
 from app.models.schema import (
     MaterialInfo,
     VideoAspect,
@@ -1180,7 +1209,7 @@ def generate_video(
     def create_text_clip(subtitle_item):
         params.font_size = int(params.font_size)
         params.stroke_width = int(params.stroke_width)
-        phrase = subtitle_item[1]
+        phrase = shape_rtl_text(subtitle_item[1])
         max_width = video_width * 0.9
         bg_color = resolve_subtitle_background_color()
         rounded_bg_enabled = bool(

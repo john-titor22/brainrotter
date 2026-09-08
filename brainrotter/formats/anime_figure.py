@@ -13,9 +13,8 @@ high-energy background footage with big word-pop captions.
 
 from __future__ import annotations
 
-from ..engine import voices
 from ..models import Brief, CaptionStyle, RenderPlan, Script, ScriptBeat
-from .base import common_json_rules
+from .base import common_json_rules, finalize_plan, resolve_voice
 
 ID = "anime_figure"
 NAME = "Figure Brainrot"
@@ -81,14 +80,18 @@ def parse_script(raw: dict) -> Script:
     )
 
 
+VOICE_TAGS = ("hype", "narrator")
+MUSIC_MOODS = ("epic", "hype", "tense")
+
+
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:
     style = brief.style or {}
-    voice = voices.get(style.get("voice") or voices.for_tags("hype", "narrator").name)
-    return RenderPlan(
+    voice = resolve_voice(style, brief, *VOICE_TAGS)
+    plan = RenderPlan(
         subject=script.title or brief.topic,
         script_text=script.narration_text,
         voice_name=voice.name,
-        voice_rate=float(style.get("voice_rate", 1.2)),
+        voice_rate=float(style.get("voice_rate", voice.default_rate)),
         background_clips=background_clips,
         background_source="local" if background_clips else "pexels",
         clip_duration=int(style.get("clip_duration", 3)),
@@ -101,3 +104,4 @@ def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> Ren
         music=style.get("music", "random"),
         music_volume=float(style.get("music_volume", 0.2)),
     )
+    return finalize_plan(plan, brief, style)

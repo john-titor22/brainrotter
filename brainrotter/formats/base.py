@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from ..engine import voices
 from ..models import Brief, RenderPlan, Script
+
+# Arabic-script caption face, bundled next to the Latin one in engine resource/fonts.
+RTL_CAPTION_FONT = "NotoNaskhArabic-Bold.ttf"
 
 
 class Format(Protocol):
@@ -48,3 +52,26 @@ Keep total spoken length within the target duration (roughly 2.5 words/second).
 
 def common_json_rules() -> str:
     return _COMMON_JSON_RULES
+
+
+def resolve_voice(style: dict, brief: Brief, *fallback_tags: str):
+    """The Director normally supplies ``style['voice']``; otherwise fall back to
+    a tag match in the brief's language."""
+    name = style.get("voice")
+    if name:
+        v = voices.get(name)
+        # guard against a stale English voice on a non-English brief
+        if v.language == brief.language or brief.language == "en":
+            return v
+    return voices.for_tags(*fallback_tags, language=brief.language)
+
+
+def finalize_plan(plan: RenderPlan, brief: Brief, style: dict) -> RenderPlan:
+    """Apply the cross-format bits: language, RTL captions, the Director's track."""
+    plan.language = brief.language
+    if brief.language in voices.RTL_LANGS:
+        plan.caption.rtl = True
+        plan.caption.font_name = RTL_CAPTION_FONT
+    if style.get("music_file"):
+        plan.music_file = style["music_file"]
+    return plan

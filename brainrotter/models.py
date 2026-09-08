@@ -43,6 +43,7 @@ class Brief(BaseModel):
 
     format_id: str
     topic: str
+    language: str = "en"             # en | fr | ar | ary  (Darija) — Director's pick
     angle: str = ""                  # the specific take / framing
     hook: str = ""                   # first-line hook the writer should honor
     target_seconds: int = 40
@@ -75,6 +76,7 @@ class Script(BaseModel):
 class CaptionStyle(BaseModel):
     position: str = "center"             # top | center | bottom
     font_name: str = "BeVietnamPro-Bold.ttf"   # must exist in engine resource/fonts
+    rtl: bool = False                    # Arabic / Darija — reshape + bidi the text
     font_size: int = 84
     fore_color: str = "#FFFFFF"
     stroke_color: str = "#000000"
@@ -92,6 +94,7 @@ class RenderPlan(BaseModel):
 
     subject: str                         # short label — used for filenames / social meta
     script_text: str                     # full narration
+    language: str = "en"                 # en | fr | ar | ary
     voice_name: str = "en-US-AndrewNeural"
     voice_rate: float = 1.15             # 1.0 = normal
     voice_volume: float = 1.0
@@ -100,6 +103,7 @@ class RenderPlan(BaseModel):
     clip_duration: int = 5              # max seconds per background cut (cut cadence)
     caption: CaptionStyle = CaptionStyle()
     music: str = "random"               # "random" | "" (none) | filename in songs dir
+    music_file: str | None = None       # specific track the Director picked (wins over `music`)
     music_volume: float = 0.16
     aspect: str = "9:16"
     # Optional: a talking-head video (lip-synced to the narration). When set, the

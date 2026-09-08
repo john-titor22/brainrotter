@@ -6,6 +6,7 @@ annotated-doc==0.0.5
 annotated-types==0.8.0
 anthropic==1.4.0
 anyio==4.15.1
+arabic-reshaper==3.0.1
 attrs==26.1.0
 av==18.1.0
 azure-cognitiveservices-speech==1.41.1

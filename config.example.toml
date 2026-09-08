@@ -12,10 +12,23 @@ ollama_url = "http://localhost:11434"
 # Good alternatives: qwen2.5:7b, gemma2:9b, mistral-nemo
 ollama_model = "llama3.1:8b"
 ollama_fast_model = "llama3.1:8b"
+# Used for any non-English script — llama3.1 is weak outside English, Aya is
+# built for this.  ollama pull aya-expanse:8b   (falls back to ollama_model)
+multilingual_model = "aya-expanse:8b"
 temperature = 0.95
 # Only used when provider = "anthropic":
 anthropic_model = "claude-opus-5"
 anthropic_fast_model = "claude-sonnet-5"
+
+[language]
+# The Director picks one language per video from these weights. Leave just
+# "en" for English-only. Codes: en, fr (French), ar (Modern Standard Arabic),
+# ary (Moroccan Darija — written by the LLM, spoken by the ar-MA voice).
+# Arabic/Darija need the bundled Arabic caption font + arabic-reshaper (both
+# handled by setup); non-English quality depends on multilingual_model above.
+weights = { en = 1.0 }
+# e.g. a Moroccan-focused mix:
+# weights = { en = 0.3, fr = 0.3, ary = 0.4 }
 
 [footage]
 # Let Brainrotter download its own background gameplay from YouTube
@@ -33,6 +46,19 @@ cookies_file = ""
 # Fallback: read cookies live from a browser ("chrome"/"edge"/"brave"/"firefox").
 # You must fully CLOSE that browser first, and Chrome 127+ may still block it.
 cookies_from_browser = ""
+
+[music]
+# Self-sourced, mood-tagged background music (like footage). The Director picks
+# a mood per video and a specific track inside it, so the feed stops sounding
+# like one looped song. Drop your own MP3s in assets/music/<mood>/ to skip
+# downloading.
+enabled = true
+allow_youtube = true
+per_mood = 4              # keep this many tracks per mood
+seconds_per_track = 90    # trim each download to this
+auto_sync = true          # fetch a mood on demand the first time it's used
+sync_budget_seconds = 150
+moods = ["hype", "tense", "eerie", "epic", "chill", "funny"]
 
 [video]
 width = 1080

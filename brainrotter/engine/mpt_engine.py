@@ -43,6 +43,24 @@ def _stage_materials(clips: list[str]) -> list[str]:
     return names
 
 
+def _stage_bgm(path: str) -> str:
+    """MPT only accepts a bgm file that lives in storage/bgm/ or resource/songs/.
+    Mirror the Director's chosen track into storage/bgm/ and return its basename."""
+    src = Path(path).resolve()
+    if not src.is_file():
+        return ""
+    staging = ENGINE_ROOT / "storage" / "bgm"
+    staging.mkdir(parents=True, exist_ok=True)
+    st = src.stat()
+    dst = staging / f"{abs(hash((str(src), st.st_size))) & 0xFFFFFFFF:08x}{src.suffix.lower()}"
+    if not dst.exists():
+        try:
+            dst.hardlink_to(src)
+        except (OSError, NotImplementedError):
+            shutil.copy2(src, dst)
+    return dst.name
+
+
 class EngineError(RuntimeError):
     pass
 
@@ -104,6 +122,8 @@ def render_plan(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None) -
                     f"{settings.backgrounds_path} or set background_source='pexels'"
                 )
 
+    bgm_name = _stage_bgm(plan.music_file) if plan.music_file else ""
+
     cap = plan.caption
     params = VideoParams(
         video_subject=plan.subject or "brainrotter",
@@ -118,7 +138,8 @@ def render_plan(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None) -
         voice_name=plan.voice_name,
         voice_rate=plan.voice_rate,
         voice_volume=1.0 if voice_preview else plan.voice_volume,
-        bgm_type=plan.music if plan.music else "",
+        bgm_type=(plan.music or "random") if (plan.music or bgm_name) else "",
+        bgm_file=bgm_name,
         bgm_volume=plan.music_volume,
         subtitle_enabled=True,
         subtitle_position=_POSITION_MAP.get(cap.position, "center"),

@@ -23,9 +23,39 @@ class WriterCfg(BaseModel):
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_fast_model: str = "llama3.1:8b"
+    # Used for any non-English script (French / Arabic / Darija). llama3.1 is
+    # weak outside English; Aya is trained for exactly this. Pull it with
+    # `ollama pull aya-expanse:8b`. Falls back to ollama_model if absent.
+    multilingual_model: str = "aya-expanse:8b"
     anthropic_model: str = "claude-opus-5"
     anthropic_fast_model: str = "claude-sonnet-5"
     temperature: float = 0.95           # brainrot rewards creativity over precision
+
+
+class LanguageCfg(BaseModel):
+    # The Director picks one language per video from these weights. Codes:
+    # en (English), fr (French), ar (Modern Standard Arabic), ary (Moroccan
+    # Darija — written by the LLM in Arabic script, spoken by the ar-MA voice).
+    weights: dict[str, float] = Field(default_factory=lambda: {"en": 1.0})
+
+    @property
+    def enabled(self) -> list[str]:
+        return [c for c, w in self.weights.items() if w > 0] or ["en"]
+
+
+class MusicCfg(BaseModel):
+    # Self-sourced, mood-tagged background music (like footage). The Director
+    # picks a mood per video and a specific track inside it, so the feed stops
+    # sounding like one looped song.
+    enabled: bool = True
+    allow_youtube: bool = True          # download "no copyright" tracks with yt-dlp
+    per_mood: int = 4                   # keep this many tracks per mood
+    seconds_per_track: int = 90         # trim each download to this
+    auto_sync: bool = True              # fetch a mood on demand when it's empty
+    sync_budget_seconds: int = 150
+    moods: list[str] = Field(default_factory=lambda: [
+        "hype", "tense", "eerie", "epic", "chill", "funny",
+    ])
 
 
 class AvatarCfg(BaseModel):
@@ -121,7 +151,9 @@ class TrendsCfg(BaseModel):
 class Settings(BaseModel):
     out_dir: str = "workspace/out"
     writer: WriterCfg = WriterCfg()
+    language: LanguageCfg = LanguageCfg()
     footage: FootageCfg = FootageCfg()
+    music: MusicCfg = MusicCfg()
     avatar: AvatarCfg = AvatarCfg()
     video: VideoCfg = VideoCfg()
     tts: TtsCfg = TtsCfg()
@@ -178,6 +210,10 @@ class Settings(BaseModel):
     @property
     def footage_path(self) -> Path:
         return self._ensure(PROJECT_ROOT / "assets" / "cache" / "footage")
+
+    @property
+    def music_cache_path(self) -> Path:
+        return self._ensure(PROJECT_ROOT / "assets" / "cache" / "music")
 
     @staticmethod
     def _ensure(p: Path) -> Path:

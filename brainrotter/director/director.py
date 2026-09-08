@@ -13,11 +13,27 @@ from __future__ import annotations
 
 import random
 
-from .. import db
+from .. import db, music
 from ..config import get_settings
+from ..engine import voices
 from ..formats import registry
 from ..models import Brief, TrendSignal
 from ..writer import llm
+
+_LANG_NAME = {"en": "English", "fr": "French", "ar": "Arabic (MSA)", "ary": "Moroccan Darija"}
+
+# Fallback voice tags / music moods per format when the format module doesn't
+# declare its own. The Director picks a specific voice + track within these.
+_FORMAT_VOICE_TAGS = {
+    "reddit_story": ("reddit", "storytime", "hype"),
+    "ai_brainrot": ("documentary", "narrator", "ai_brainrot"),
+    "anime_figure": ("hype", "narrator"),
+}
+_FORMAT_MUSIC_MOODS = {
+    "reddit_story": ("tense", "funny", "hype", "chill"),
+    "ai_brainrot": ("eerie", "epic", "tense"),
+    "anime_figure": ("epic", "hype", "tense"),
+}
 
 
 def decide(
@@ -25,6 +41,7 @@ def decide(
     *,
     format_id: str | None = None,
     topic: str | None = None,
+    language: str | None = None,
     seed: int | None = None,
 ) -> Brief:
     settings = get_settings()
@@ -36,19 +53,22 @@ def decide(
     signal = None if topic else _pick_signal(signals, fmt, rng)
     chosen_topic = topic or (signal.title if signal else "a story that went too far")
 
+    language = (language or _choose_language(rng)).lower()
+
     target_seconds = rng.choice([30, 35, 40, 45, 50])
     target_seconds = max(settings.video.min_seconds,
                          min(settings.video.max_seconds, target_seconds))
 
-    angle, hook = _angle_and_hook(fmt_id, chosen_topic, signal)
+    angle, hook = _angle_and_hook(fmt_id, chosen_topic, signal, language)
 
-    style = _style_knobs(fmt, rng)
+    style = _style_knobs(fmt, rng, language)
 
-    rationale = _rationale(fmt_id, signal, target_seconds)
+    rationale = _rationale(fmt_id, signal, target_seconds, language, style)
 
     return Brief(
         format_id=fmt_id,
         topic=chosen_topic,
+        language=language,
         angle=angle,
         hook=hook,
         target_seconds=target_seconds,
@@ -58,6 +78,20 @@ def decide(
         rationale=rationale,
         source_signal=signal,
     )
+
+
+# --- language --------------------------------------------------------------
+
+def _choose_language(rng: random.Random) -> str:
+    weights = dict(get_settings().language.weights) or {"en": 1.0}
+    weights = {k: v for k, v in weights.items() if v > 0} or {"en": 1.0}
+    # nudge away from the language of the last video so a multi-language config
+    # actually alternates instead of streaking
+    last = (db.recent_languages(1) or [None])[0]
+    if last in weights and len(weights) > 1:
+        weights[last] *= 0.4
+    langs = list(weights)
+    return rng.choices(langs, weights=[weights[l] for l in langs], k=1)[0]
 
 
 # --- format allocation -------------------------------------------------------
@@ -124,23 +158,37 @@ _FORMAT_BRIEF = {
 }
 
 
-def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None) -> tuple[str, str]:
+def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None,
+                    language: str = "en") -> tuple[str, str]:
     if llm.available():
         try:
+            lang_line = ""
+            if language != "en":
+                lang_line = (
+                    f"\nWrite the \"hook\" in {_LANG_NAME.get(language, language)} "
+                    "(natural spoken register, not formal). Keep \"angle\" in English."
+                )
+                if language == "ary":
+                    lang_line = (
+                        "\nWrite the \"hook\" in Moroccan Darija using Arabic "
+                        "script — the way people actually speak it, not Modern "
+                        "Standard Arabic. Keep \"angle\" in English."
+                    )
             data = llm.complete_json(
                 "You are a short-form video strategist. Given a topic and format, "
                 "return {\"angle\": str, \"hook\": str}. The angle is the specific "
                 "framing (one sentence). The hook is the exact first spoken line "
                 "(<=14 words), in the VOICE of the format, engineered to stop the "
-                "scroll.",
+                "scroll." + lang_line,
                 f"Format: {fmt_id} — {_FORMAT_BRIEF.get(fmt_id, '')}\nTopic: {topic}\n"
                 + (f"Source excerpt: {signal.body[:800]}" if signal and signal.body else ""),
-                fast=True, max_tokens=400,
+                fast=True, max_tokens=400, language=language,
             )
             return str(data.get("angle", "")).strip(), str(data.get("hook", "")).strip()
         except Exception:
             pass
-    # heuristic fallback
+    # heuristic fallback (English hook — the writer still produces the script in
+    # the target language, this is only a seed)
     if fmt_id == "ai_brainrot":
         return "documentary reveal of an absurd creature", f"Deep in the archives, they found {topic}."
     if fmt_id == "anime_figure":
@@ -148,14 +196,39 @@ def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None) -> tupl
     return "escalating first-person conflict with a payoff", f"I never thought {topic} would blow up like this."
 
 
-def _style_knobs(fmt, rng: random.Random) -> dict:
+def _style_knobs(fmt, rng: random.Random, language: str = "en") -> dict:
     bg = _pick_backgrounds(fmt, rng)
+
+    # voice — a specific catalog voice for this language, varied across videos
+    vtags = tuple(getattr(fmt, "VOICE_TAGS", None)
+                  or _FORMAT_VOICE_TAGS.get(fmt.ID, ("narrator",)))
+    voice = voices.pick(rng, language=language, tags=vtags,
+                        exclude=tuple(db.recent_voices(5)))
+
+    # music — a mood, then a specific track inside it, both anti-repeat
+    moods = list(getattr(fmt, "MUSIC_MOODS", None)
+                 or _FORMAT_MUSIC_MOODS.get(fmt.ID, ("chill", "hype")))
+    recent_moods = db.recent_music_moods(4)
+    mw = [max(0.05, 0.4 ** recent_moods.count(m)) for m in moods]
+    mood = rng.choices(moods, weights=mw, k=1)[0]
+    track = None
+    if get_settings().music.enabled:
+        try:
+            track = music.pick(mood, rng, exclude=tuple(db.recent_music(8)))
+        except Exception:
+            track = None
+
     return {
-        "voice_rate": round(rng.uniform(1.08, 1.25), 2),
+        "voice": voice.name,
+        "voice_rate": round(rng.uniform(*(
+            (1.0, 1.12) if language in ("ar", "ary") else (1.08, 1.25)
+        )), 2),
         "clip_duration": rng.choice([3, 4, 5]),
         "caption_position": "center",
         "font_size": rng.choice([80, 84, 88]),
-        "music": "random",
+        "music": "random",                      # engine fallback if no track
+        "music_mood": mood,
+        "music_file": track,                    # specific track, wins over `music`
         "music_volume": round(rng.uniform(0.10, 0.20), 2),
         "background_category": bg[0],            # primary (back-compat)
         "background_categories": bg,             # 1-2 games, mixed within the video
@@ -179,7 +252,8 @@ def _pick_backgrounds(fmt, rng: random.Random) -> list[str]:
     return [first]
 
 
-def _rationale(fmt_id: str, signal: TrendSignal | None, seconds: int) -> str:
+def _rationale(fmt_id: str, signal: TrendSignal | None, seconds: int,
+               language: str = "en", style: dict | None = None) -> str:
     stats = db.format_stats().get(fmt_id, {})
     bits = [f"format={fmt_id}"]
     if stats.get("n_published"):
@@ -190,5 +264,12 @@ def _rationale(fmt_id: str, signal: TrendSignal | None, seconds: int) -> str:
         bits.append(f"signal from {signal.source} (score {signal.score:.2f})")
     else:
         bits.append("topic supplied / from bank")
+    if language != "en":
+        bits.append(f"lang={_LANG_NAME.get(language, language)}")
+    if style:
+        bits.append(f"voice={style.get('voice', '?')}")
+        m = style.get("music_mood")
+        if m:
+            bits.append(f"music={m}" + ("" if style.get("music_file") else " (random — pool empty)"))
     bits.append(f"target {seconds}s")
     return "; ".join(bits)

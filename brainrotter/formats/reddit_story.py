@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from ..engine import voices
 from ..models import Brief, CaptionStyle, RenderPlan, Script, ScriptBeat
-from .base import common_json_rules
+from .base import common_json_rules, finalize_plan, resolve_voice
 
 ID = "reddit_story"
 NAME = "Reddit Story Readalong"
@@ -57,10 +56,14 @@ def parse_script(raw: dict) -> Script:
     )
 
 
+VOICE_TAGS = ("reddit", "storytime", "hype")
+MUSIC_MOODS = ("tense", "funny", "hype", "chill")
+
+
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:
     style = brief.style or {}
-    voice = voices.get(style.get("voice") or voices.for_tags("reddit", "storytime").name)
-    return RenderPlan(
+    voice = resolve_voice(style, brief, *VOICE_TAGS)
+    plan = RenderPlan(
         subject=script.title or brief.topic,
         script_text=script.narration_text,
         voice_name=voice.name,
@@ -77,3 +80,4 @@ def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> Ren
         music=style.get("music", "random"),
         music_volume=float(style.get("music_volume", 0.12)),
     )
+    return finalize_plan(plan, brief, style)

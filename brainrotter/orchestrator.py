@@ -38,9 +38,10 @@ def _render_lock(wait: bool = True, poll: float = 3.0):
 
 
 def plan_brief(*, format_id: str | None = None, topic: str | None = None,
-               seed: int | None = None) -> Brief:
+               language: str | None = None, seed: int | None = None) -> Brief:
     signals = trends.gather(seed=seed)
-    return director.decide(signals, format_id=format_id, topic=topic, seed=seed)
+    return director.decide(signals, format_id=format_id, topic=topic,
+                           language=language, seed=seed)
 
 
 def produce(brief: Brief, *, job_id: str | None = None,
@@ -88,6 +89,24 @@ def produce(brief: Brief, *, job_id: str | None = None,
         if portrait:
             plan.portrait = portrait
 
+        # Resolve the Director's music mood to an actual track — downloading a
+        # few for that mood on first use (cached after), like footage.
+        mood = style.get("music_mood")
+        if mood and not plan.music_file and settings.music.enabled:
+            from . import music
+            import random as _r
+
+            try:
+                music.ensure(mood, count=settings.music.per_mood)
+                pick = music.pick(mood, _r.Random(seed),
+                                  exclude=tuple(db.recent_music(8)))
+            except Exception:
+                pick = None
+            if pick:
+                plan.music_file = pick
+                brief.style["music_file"] = pick   # so recent_music() sees it
+                db.update_job(job_id, brief=brief.model_dump())
+
         db.update_job(job_id, state=JobState.RENDERING.value)
         t = time.time()
         with _render_lock():
@@ -117,9 +136,10 @@ def produce(brief: Brief, *, job_id: str | None = None,
 
 
 def run_once(*, format_id: str | None = None, topic: str | None = None,
-             seed: int | None = None, publish_to: list[str] | None = None) -> VideoResult:
+             language: str | None = None, seed: int | None = None,
+             publish_to: list[str] | None = None) -> VideoResult:
     db.init_db()
-    brief = plan_brief(format_id=format_id, topic=topic, seed=seed)
+    brief = plan_brief(format_id=format_id, topic=topic, language=language, seed=seed)
     return produce(brief, publish_to=publish_to)
 
 

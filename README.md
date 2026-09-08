@@ -29,8 +29,17 @@ a local dashboard (queue, previews, per-video rationale).
   invented creature lore), `anime_figure` (a real public figure recast as an
   anime protagonist — a lip-synced talking head of them narrates it, stacked on
   gameplay). The Director chooses per video; new formats are one file.
-- **Writer:** local LLM via Ollama (`llama3.1:8b`). No key, no egress.
-- **Voice:** `edge-tts` (free Microsoft neural voices).
+- **Writer:** local LLM via Ollama (`llama3.1:8b`; `aya-expanse:8b` for
+  non-English). No key, no egress.
+- **Languages:** the Director picks one per video from `[language]` weights —
+  English, French, Arabic (MSA), and **Moroccan Darija** (`ary`, Arabic script,
+  spoken by the Moroccan neural voice). Arabic/Darija captions are reshaped +
+  bidi'd and drawn in a bundled Arabic font.
+- **Voice + music:** the Director picks a specific voice *and* a specific music
+  track per video, matched to the format, language and mood, and biased away
+  from what the last few videos used — the feed stops sounding like one voice
+  over one loop. Music is self-sourced by mood (`hype`/`tense`/`eerie`/`epic`/
+  `chill`/`funny`), same as footage.
 - **Footage:** self-sourced with `yt-dlp` — "no copyright" gameplay for most
   formats, clips *of the figure* for `anime_figure`. Cached and reused. Or drop
   your own into `assets/backgrounds/<category>/`.
@@ -55,6 +64,7 @@ python -m venv .venv
 # local model for the Writer  (no API key)
 winget install Ollama.Ollama
 ollama pull llama3.1:8b
+ollama pull aya-expanse:8b             # only if you enable non-English languages
 
 .venv\Scripts\brainrotter doctor       # check what's missing
 
@@ -111,6 +121,28 @@ used, and the engine hard-cuts between them mid-video. Widen the pool by editing
 
 `brainrotter formats` shows per-format performance; `brainrotter trends` shows
 what the Director currently sees.
+
+**Languages.** Set `[language]` weights in `config.toml` and the Director rolls a
+language per video:
+
+```toml
+[language]
+weights = { en = 0.3, fr = 0.3, ary = 0.4 }   # English / French / Moroccan Darija
+```
+
+Codes: `en`, `fr`, `ar` (Modern Standard Arabic), `ary` (Darija — written in
+Arabic script, spoken by the `ar-MA` neural voice; there is no keyless *true*
+Darija TTS, so quality rides on the writer model). Pull `aya-expanse:8b` for
+non-English — `llama3.1` is weak outside English. Force one with
+`brainrotter run -l fr`. Arabic/Darija captions are letter-joined + bidi'd and
+rendered in the bundled `NotoNaskhArabic-Bold.ttf`.
+
+**Voice & music per video.** The Director picks a specific catalog voice and a
+specific music track for every video (see `brainrotter/engine/voices.py`),
+matched to format + language + mood and weighted away from the last few videos'
+choices. Music is mood-tagged and self-sourced like footage:
+`brainrotter music sync` (or it fetches a mood on first use), `brainrotter music
+list`, or drop MP3s into `assets/music/<mood>/`.
 
 **One video at a time.** The dashboard worker renders jobs strictly
 sequentially — the next starts only when the current one finishes. Queue as many

@@ -21,6 +21,8 @@ dependencies = [
     "rich>=13",
     "typer>=0.12",
     "toml>=0.10",
+    "arabic-reshaper>=3.0",   # Arabic / Darija captions: join letters + apply bidi
+    "python-bidi>=0.4",
 ]
 
 [project.optional-dependencies]
