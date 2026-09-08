@@ -79,36 +79,64 @@ def write(brief: Brief) -> Script:
 
 
 _DARIJA_POLISH_SYS = (
-    "نتا مترجم للدارجة المغربية. كنعطيوك جمل مكتوبة بخليط ديال الفصحى والدارجة، "
-    "وخصك ترجعهم دارجة مغربية صافية بحال ما كيهضرو الناس فالزنقة. بدّل كل كلمة "
-    "فصحى بالمعادلة ديالها فالدارجة (يوجد→كاين، الذي→اللي، جداً→بزاف، الآن→دابا، "
-    "سوف→غادي، مثل→بحال، لأن→حيت، ليس→ماشي، عندما→منين، يمكن→يمكن ليه). خلي "
-    "المعنى كيفما هو وخلي الطول قريب. ما تزيدش شي حاجة."
+    "نتا مغربي وخدمتك هي تحويل النص من الفصحى للدارجة المغربية الصافية — الدارجة "
+    "اللي كيهضرو بيها الناس فالزنقة، ماشي فالتلفزة.\n"
+    "بدّل كل كلمة فصحى بلي كاينة فالدارجة: يوجد/هناك→كاين، لا يوجد→ماكاينش، "
+    "الذي/التي→اللي، هذا→هاد، جداً→بزاف، الآن→دابا، سوف/سـ→غادي، مثل→بحال، "
+    "لأن→حيت/على حقاش، ليس→ماشي، عندما→منين، لماذا→علاش، كيف→كيفاش، أين→فين، "
+    "أريد→بغيت، يصبح→يولي، يستطيع→يقدر، بدأ→بدا، وجد→لقا، رأى→شاف، ذهب→مشا، "
+    "قال→قال، يقول→كيقول، لكن→ولكن/بصح، فقط→غير، الأمة/البلاد→البلاد، "
+    "المواجهة→المواجهة (خليها)، عزيمة→عزيمة (خليها).\n"
+    "الأفعال المضارع خصهم يبداو بـ (كـ): يمشي→كيمشي، يحارب→كيحارب.\n"
+    "مثال:\n"
+    "فصحى: «عندما كان صغيراً، كان الناس يقولون إن هذا مستحيل، لكنه لم يستسلم "
+    "وأصبح بطلاً».\n"
+    "دارجة: «منين كان صغير، كانو الناس كيقولو بلي هاد الشي مستحيل، بصح ما "
+    "استسلماش وولا بطل».\n"
+    "خلي المعنى والطول كيفما هما. ما تزيد ولا تنقص شي معلومة."
 )
 
+# fus-ha giveaways — if the polish still leaves these, run it again
+_MSA_MARKERS = ("يوجد", "هناك", "الذي", "التي", " جداً", " جدا", " سوف ", "عندما",
+                "لماذا", " كيف ", " ليس ", "الآن", " إنّ", " أنّ", "يصبح", "أصبح",
+                "لم يست", "لكنه", "لكنها")
 
-def _darija_polish(script: Script) -> None:
-    """Second pass — local models slip back into MSA on hype/epic register, so
-    rewrite every line into pure street Darija. Best-effort: on any failure or
-    a length mismatch, the original text is kept."""
-    lines = [script.title] + [b.narration for b in script.beats]
-    try:
-        data = llm.complete_json(
-            _DARIJA_POLISH_SYS,
-            "رجّع هاد الجمل دارجة صافية. جاوب بـ JSON: "
-            '{"lines": [...]} بنفس العدد وبنفس الترتيب.\n\n'
-            + json.dumps(lines, ensure_ascii=False),
-            fast=True, max_tokens=2000, language="ary", temperature=0.3,
-        )
-        out = data.get("lines") or data.get("جمل") or []
-        if isinstance(out, list) and len(out) == len(lines):
+
+def _msa_count(text: str) -> int:
+    return sum(text.count(m) for m in _MSA_MARKERS)
+
+
+def _darija_polish(script: Script, rounds: int = 2) -> None:
+    """Local models slip back into MSA on hype/epic register — rewrite every
+    line into pure street Darija, repeating while fus-ha markers remain.
+    Best-effort: on any failure or a length mismatch, the last good text stays."""
+    for _ in range(max(1, rounds)):
+        lines = [script.title] + [b.narration for b in script.beats]
+        if _msa_count(" ".join(lines)) <= 2:
+            return
+        try:
+            data = llm.complete_json(
+                _DARIJA_POLISH_SYS,
+                "رجّع هاد الجمل دارجة مغربية صافية. جاوب غير بـ JSON: "
+                '{"lines": [...]} بنفس العدد وبنفس الترتيب.\n\n'
+                + json.dumps(lines, ensure_ascii=False),
+                fast=True, max_tokens=2000, language="ary", temperature=0.2,
+            )
+            out = data.get("lines") or data.get("جمل") or []
+            if not (isinstance(out, list) and len(out) == len(lines)):
+                return
             cleaned = [str(x).strip() for x in out]
-            if all(cleaned):
+            if not all(cleaned):
+                return
+            # only accept the rewrite if it actually reduced the fus-ha
+            if _msa_count(" ".join(cleaned)) < _msa_count(" ".join(lines)):
                 script.title = cleaned[0]
                 for beat, txt in zip(script.beats, cleaned[1:]):
                     beat.narration = txt
-    except Exception:
-        pass
+            else:
+                return
+        except Exception:
+            return
 
 
 def _stub_script(brief: Brief) -> Script:

@@ -42,6 +42,7 @@ def decide(
     format_id: str | None = None,
     topic: str | None = None,
     language: str | None = None,
+    voice: str | None = None,
     seed: int | None = None,
 ) -> Brief:
     settings = get_settings()
@@ -53,6 +54,9 @@ def decide(
     signal = None if topic else _pick_signal(signals, fmt, rng)
     chosen_topic = topic or (signal.title if signal else "a story that went too far")
 
+    # An explicit voice pins the language too (unless one was also given).
+    if voice and not language:
+        language = voices.language_of(voice)
     language = (language or _choose_language(rng)).lower()
 
     target_seconds = rng.choice([30, 35, 40, 45, 50])
@@ -61,7 +65,7 @@ def decide(
 
     angle, hook = _angle_and_hook(fmt_id, chosen_topic, signal, language)
 
-    style = _style_knobs(fmt, rng, language)
+    style = _style_knobs(fmt, rng, language, voice)
 
     rationale = _rationale(fmt_id, signal, target_seconds, language, style)
 
@@ -198,14 +202,19 @@ def _angle_and_hook(fmt_id: str, topic: str, signal: TrendSignal | None,
     return "escalating first-person conflict with a payoff", f"I never thought {topic} would blow up like this."
 
 
-def _style_knobs(fmt, rng: random.Random, language: str = "en") -> dict:
+def _style_knobs(fmt, rng: random.Random, language: str = "en",
+                 forced_voice: str | None = None) -> dict:
     bg = _pick_backgrounds(fmt, rng)
 
     # voice — a specific catalog voice for this language, varied across videos
+    # (unless the caller pinned one).
     vtags = tuple(getattr(fmt, "VOICE_TAGS", None)
                   or _FORMAT_VOICE_TAGS.get(fmt.ID, ("narrator",)))
-    voice = voices.pick(rng, language=language, tags=vtags,
-                        exclude=tuple(db.recent_voices(5)))
+    if forced_voice and forced_voice in voices._BY_NAME:
+        voice = voices.get(forced_voice)
+    else:
+        voice = voices.pick(rng, language=language, tags=vtags,
+                            exclude=tuple(db.recent_voices(5)))
 
     # music — a mood, then a specific track inside it, both anti-repeat
     moods = list(getattr(fmt, "MUSIC_MOODS", None)

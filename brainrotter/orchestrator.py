@@ -38,10 +38,11 @@ def _render_lock(wait: bool = True, poll: float = 3.0):
 
 
 def plan_brief(*, format_id: str | None = None, topic: str | None = None,
-               language: str | None = None, seed: int | None = None) -> Brief:
+               language: str | None = None, voice: str | None = None,
+               seed: int | None = None) -> Brief:
     signals = trends.gather(seed=seed)
     return director.decide(signals, format_id=format_id, topic=topic,
-                           language=language, seed=seed)
+                           language=language, voice=voice, seed=seed)
 
 
 def produce(brief: Brief, *, job_id: str | None = None,
@@ -139,10 +140,12 @@ def produce(brief: Brief, *, job_id: str | None = None,
 
 
 def run_once(*, format_id: str | None = None, topic: str | None = None,
-             language: str | None = None, seed: int | None = None,
+             language: str | None = None, voice: str | None = None,
+             seed: int | None = None,
              publish_to: list[str] | None = None) -> VideoResult:
     db.init_db()
-    brief = plan_brief(format_id=format_id, topic=topic, language=language, seed=seed)
+    brief = plan_brief(format_id=format_id, topic=topic, language=language,
+                       voice=voice, seed=seed)
     return produce(brief, publish_to=publish_to)
 
 

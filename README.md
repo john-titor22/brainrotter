@@ -131,11 +131,12 @@ weights = { en = 0.3, fr = 0.3, ary = 0.4 }   # English / French / Moroccan Dari
 ```
 
 Codes: `en`, `fr`, `ar` (Modern Standard Arabic), `ary` (Darija — written in
-Arabic script, spoken by the `ar-MA` neural voice; there is no keyless *true*
-Darija TTS, so quality rides on the writer model). Pull `aya-expanse:8b` for
-non-English — `llama3.1` is weak outside English. Force one with
-`brainrotter run -l fr`. Arabic/Darija captions are letter-joined + bidi'd and
-rendered in the bundled `NotoNaskhArabic-Bold.ttf`.
+Arabic script). There is no keyless *true* Darija TTS: the Moroccan (`ar-MA`)
+and Algerian (`ar-DZ`) neural voices read the LLM's Darija text, and a second
+"polish" pass rewrites any Modern-Standard-Arabic drift back into street Darija
+(local models slide toward MSA on epic register). Pull `aya-expanse:8b` for
+non-English — `llama3.1` is weak outside English. Arabic/Darija captions are
+letter-joined + bidi'd and rendered in the bundled `NotoNaskhArabic-Bold.ttf`.
 
 **Voice & music per video.** The Director picks a specific catalog voice and a
 specific music track for every video (see `brainrotter/engine/voices.py`),
@@ -143,6 +144,11 @@ matched to format + language + mood and weighted away from the last few videos'
 choices. Music is mood-tagged and self-sourced like footage:
 `brainrotter music sync` (or it fetches a mood on first use), `brainrotter music
 list`, or drop MP3s into `assets/music/<mood>/`.
+
+**Pin the language / voice for a specific video.** The dashboard's *New job*
+form has Language and Voice dropdowns (both default to "Director decides"). From
+the CLI: `brainrotter run -l ary --voice ar-DZ-IsmaelNeural`. `brainrotter
+voices` lists the catalog.
 
 **One video at a time.** The dashboard worker renders jobs strictly
 sequentially — the next starts only when the current one finishes. Queue as many

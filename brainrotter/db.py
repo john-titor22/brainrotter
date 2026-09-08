@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     brief_json    TEXT,
     script_json   TEXT,
     result_json   TEXT,
+    overrides_json TEXT,
     error         TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
@@ -91,6 +92,10 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(_SCHEMA)
+        # migrations for existing DBs
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+        if "overrides_json" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN overrides_json TEXT")
 
 
 # --- meta (small key/value store: paused flag, etc.) ------------------------
@@ -122,16 +127,25 @@ def set_paused(paused: bool) -> None:
 
 # --- jobs ---------------------------------------------------------------------
 
-def create_job(*, format_id: str | None = None, topic: str | None = None) -> str:
+def create_job(*, format_id: str | None = None, topic: str | None = None,
+               overrides: dict | None = None) -> str:
     job_id = uuid.uuid4().hex[:12]
     now = _utcnow()
+    ov = json.dumps({k: v for k, v in (overrides or {}).items() if v}) if overrides else None
     with connect() as conn:
         conn.execute(
-            "INSERT INTO jobs (id, state, format_id, topic, created_at, updated_at) "
-            "VALUES (?, 'queued', ?, ?, ?, ?)",
-            (job_id, format_id, topic, now, now),
+            "INSERT INTO jobs (id, state, format_id, topic, overrides_json, created_at, updated_at) "
+            "VALUES (?, 'queued', ?, ?, ?, ?, ?)",
+            (job_id, format_id, topic, ov, now, now),
         )
     return job_id
+
+
+def job_overrides(job: dict) -> dict:
+    try:
+        return json.loads(job.get("overrides_json") or "{}") or {}
+    except Exception:
+        return {}
 
 
 def update_job(job_id: str, **fields: Any) -> None:

@@ -78,6 +78,14 @@
       <label>Topic <span style="opacity:.6">(optional &mdash; overrides trends)</span></label>
       <input id="topic" placeholder="e.g. petty revenge on a landlord">
       <div class="row">
+        <div style="flex:1"><label>Language</label>
+          <select id="language" onchange="fillVoices()">
+            <option value="">Director decides</option>
+          </select></div>
+        <div style="flex:1"><label>Voice</label>
+          <select id="voice"><option value="">Director decides</option></select></div>
+      </div>
+      <div class="row">
         <div><label>Count</label><input id="count" type="number" value="1" min="1" max="50"></div>
       </div>
       <button onclick="queueJob()">Queue it</button>
@@ -115,11 +123,33 @@ async function queueJob() {
   const body = {
     format_id: $("#format").value || null,
     topic: $("#topic").value.trim() || null,
+    language: $("#language").value || null,
+    voice: $("#voice").value || null,
     count: parseInt($("#count").value) || 1,
   };
   try { await api("/api/jobs", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body)});
     $("#topic").value = ""; loadJobs();
   } catch (e) { alert(e.message); }
+}
+
+let VOICES = {};
+async function loadVoices() {
+  try {
+    const d = await api("/api/voices");
+    VOICES = d.voices || {};
+    const ls = $("#language");
+    for (const l of d.languages || [])
+      ls.insertAdjacentHTML("beforeend", `<option value="${l.code}">${esc(l.label)}</option>`);
+  } catch (e) { /* leave both on "Director decides" */ }
+}
+function fillVoices() {
+  const lang = $("#language").value;
+  const vs = $("#voice");
+  vs.innerHTML = '<option value="">Director decides</option>';
+  const list = lang ? (VOICES[lang] || []) : [].concat(...Object.values(VOICES));
+  for (const v of list)
+    vs.insertAdjacentHTML("beforeend",
+      `<option value="${v.name}">${esc(v.label)}</option>`);
 }
 
 function badge(state) {
@@ -245,6 +275,7 @@ async function loadTrends() {
 }
 
 loadFormats(); loadTrends(); loadJobs(); loadQueue();
+loadVoices().then(fillVoices);
 setInterval(() => { loadJobs(); loadQueue(); }, 2500);
 setInterval(loadFormats, 15000);
 </script>

@@ -52,6 +52,8 @@ def _acquire_worker_mutex() -> bool:
 class JobRequest(BaseModel):
     format_id: str | None = None
     topic: str | None = None
+    language: str | None = None      # en | fr | ar | ary  (blank = Director decides)
+    voice: str | None = None         # edge-tts short name (blank = Director decides)
     count: int = 1
     publish_to: list[str] | None = None
 
@@ -68,9 +70,12 @@ def _worker_loop() -> None:
             continue
         job_id = job["id"]
         try:
+            ov = db.job_overrides(job)
             brief = orchestrator.plan_brief(
                 format_id=job.get("format_id") or None,
                 topic=job.get("topic") or None,
+                language=ov.get("language") or None,
+                voice=ov.get("voice") or None,
             )
             orchestrator.produce(brief, job_id=job_id)
         except Exception as exc:  # already recorded on the job by produce()
@@ -98,14 +103,43 @@ def _startup() -> None:
 
 @app.post("/api/jobs")
 def create_jobs(req: JobRequest) -> dict:
+    from ..engine import voices
+
     if req.format_id and req.format_id not in registry.all_ids():
         raise HTTPException(400, f"unknown format '{req.format_id}'")
+    if req.voice and req.voice not in voices._BY_NAME:
+        raise HTTPException(400, f"unknown voice '{req.voice}'")
+    lang = req.language
+    if req.voice and not lang:
+        lang = voices.language_of(req.voice)
+    overrides = {"language": lang, "voice": req.voice}
     ids = [
-        db.create_job(format_id=req.format_id, topic=req.topic)
+        db.create_job(format_id=req.format_id, topic=req.topic, overrides=overrides)
         for _ in range(max(1, min(req.count, 50)))
     ]
     _ensure_worker()
     return {"queued": ids, **db.queue_summary()}
+
+
+@app.get("/api/voices")
+def voices_catalog() -> dict:
+    from ..engine import voices
+
+    names = {"en": "English", "fr": "French", "ar": "Arabic (MSA)", "ary": "Darija"}
+    by_lang = voices.catalog_by_language()
+    return {
+        "languages": [
+            {"code": c, "label": names.get(c, c)}
+            for c in ("en", "fr", "ar", "ary") if c in by_lang
+        ],
+        "voices": {
+            lang: [
+                {"name": v.name, "label": v.label, "gender": v.gender}
+                for v in vs
+            ]
+            for lang, vs in by_lang.items()
+        },
+    }
 
 
 @app.get("/api/queue")

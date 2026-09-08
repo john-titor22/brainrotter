@@ -32,6 +32,7 @@ def run(
     topic: str = typer.Option(None, "--topic", "-t", help="Force a topic."),
     language: str = typer.Option(None, "--language", "-l",
                                  help="Force a language: en | fr | ar | ary (Darija)."),
+    voice: str = typer.Option(None, "--voice", help="Force an edge-tts voice (see `brainrotter voices`)."),
     count: int = typer.Option(1, "--count", "-n", help="How many videos."),
     seed: int = typer.Option(None, help="Deterministic seed."),
     publish: str = typer.Option(None, help="Comma-separated platforms to publish to."),
@@ -49,7 +50,7 @@ def run(
         console.rule(f"[bold]job {i + 1}/{count}")
         try:
             res = orchestrator.run_once(
-                format_id=format, topic=topic, language=language,
+                format_id=format, topic=topic, language=language, voice=voice,
                 seed=(seed + i if seed is not None else None),
                 publish_to=platforms,
             )
@@ -142,6 +143,18 @@ def queue_clear_history(keep: int = typer.Option(3, help="Keep this many recent 
         f"removed [bold]{r['removed_jobs']}[/] jobs, {r['removed_files']} video files, "
         f"{r['engine_dirs_cleaned']} engine scratch folders"
     )
+
+
+@app.command()
+def voices():
+    """List the edge-tts voices the Director / `run --voice` can pick."""
+    from .engine import voices as _v
+
+    t = Table("language", "voice", "gender", "label")
+    for lang, vs in _v.catalog_by_language().items():
+        for v in vs:
+            t.add_row(lang, v.name, v.gender, v.label)
+    console.print(t)
 
 
 @app.command()
