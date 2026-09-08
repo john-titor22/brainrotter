@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .config import PROJECT_ROOT
@@ -18,12 +19,37 @@ def _step(msg: str) -> None:
 
 
 def vendor_engine() -> bool:
-    if (ENGINE_DIR / "app" / "services" / "task.py").is_file():
+    have_code = (ENGINE_DIR / "app" / "services" / "task.py").is_file()
+    have_resources = (ENGINE_DIR / "resource" / "fonts").is_dir() and any(
+        (ENGINE_DIR / "resource" / "songs").glob("*.mp3")
+    ) if (ENGINE_DIR / "resource").is_dir() else False
+
+    if have_code and have_resources:
         _step("engine already vendored.")
         return True
+
     if not shutil.which("git"):
         _step("git not found - can't fetch the engine. Install git and rerun.")
         return False
+
+    if have_code and not have_resources:
+        # code is bundled (from the zip) but runtime fonts/music are gitignored —
+        # fetch just those from a shallow clone.
+        _step("fetching engine resources (fonts + music) ...")
+        with tempfile.TemporaryDirectory() as td:
+            r = subprocess.run(["git", "clone", "--depth", "1", "--filter=blob:none",
+                                "--sparse", MPT_REPO, td])
+            if r.returncode != 0:
+                r = subprocess.run(["git", "clone", "--depth", "1", MPT_REPO, td])
+            if r.returncode != 0:
+                return False
+            subprocess.run(["git", "-C", td, "sparse-checkout", "set", "resource"],
+                           capture_output=True)
+            src = Path(td) / "resource"
+            if src.is_dir():
+                shutil.copytree(src, ENGINE_DIR / "resource", dirs_exist_ok=True)
+        return (ENGINE_DIR / "resource" / "fonts").is_dir()
+
     ENGINE_DIR.parent.mkdir(parents=True, exist_ok=True)
     _step(f"cloning MoneyPrinterTurbo into {ENGINE_DIR.relative_to(PROJECT_ROOT)} ...")
     r = subprocess.run(["git", "clone", "--depth", "1", MPT_REPO, str(ENGINE_DIR)])

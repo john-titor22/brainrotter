@@ -17,6 +17,7 @@ assets/cookies.txt
 # Brainrotter working data
 workspace/
 assets/cache/
+dist/
 assets/backgrounds/**/*.mp4
 assets/backgrounds/**/*.mkv
 assets/backgrounds/**/*.webm
