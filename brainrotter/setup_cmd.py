@@ -38,7 +38,7 @@ def vendor_engine() -> bool:
 
     if have_code and not have_font:
         _step("fetching the caption font ...")
-        _sparse_fetch(["resource/fonts"])
+        _sparse_fetch(["resource/fonts/BeVietnamPro-Bold.ttf"])
         return CAPTION_FONT.is_file()
 
     ENGINE_DIR.parent.mkdir(parents=True, exist_ok=True)
@@ -66,18 +66,24 @@ def _maybe_fetch_music() -> None:
 
 
 def _sparse_fetch(paths: list[str]) -> None:
+    """Grab specific files/dirs from the engine repo without a full clone."""
     with tempfile.TemporaryDirectory() as td:
-        clone = ["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse",
-                 MPT_REPO, td]
+        clone = ["git", "clone", "--depth", "1", "--filter=blob:none",
+                 "--sparse", "--no-checkout", MPT_REPO, td]
         if subprocess.run(clone).returncode != 0:
             if subprocess.run(["git", "clone", "--depth", "1", MPT_REPO, td]).returncode != 0:
                 return
-        subprocess.run(["git", "-C", td, "sparse-checkout", "set", *paths],
+        subprocess.run(["git", "-C", td, "sparse-checkout", "set", "--no-cone", *paths],
                        capture_output=True)
+        subprocess.run(["git", "-C", td, "checkout"], capture_output=True)
         for p in paths:
             src = Path(td) / p
+            dst = ENGINE_DIR / p
             if src.is_dir():
-                shutil.copytree(src, ENGINE_DIR / p, dirs_exist_ok=True)
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            elif src.is_file():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
 
 
 def make_configs() -> None:
