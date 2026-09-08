@@ -1,0 +1,22 @@
+BRAINROTTER - install (Windows 10/11)
+=====================================
+
+1. Right-click  install.ps1  ->  "Run with PowerShell"
+
+   (If Windows blocks it: open PowerShell in this folder and run
+        powershell -ExecutionPolicy Bypass -File install.ps1  )
+
+2. Let it finish. It installs Python, git, ffmpeg, Node and Ollama for you
+   (via the Windows package manager), sets everything up, and downloads the
+   local AI model (~5 GB - this part takes a while).
+
+3. One manual step, for background footage from YouTube:
+     - In Chrome or Edge, add the extension "Get cookies.txt LOCALLY"
+     - Open youtube.com while signed in, click the extension, Export
+     - Save the file as   assets\cookies.txt   inside this folder
+     - Then run:   .venv\Scripts\brainrotter footage sync
+
+4. Open it: double-click the "Brainrotter" shortcut on your Desktop.
+   Closing the window stops it; opening the shortcut starts it again.
+
+Full docs: README.md
