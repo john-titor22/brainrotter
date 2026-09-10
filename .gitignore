@@ -18,7 +18,7 @@ assets/cookies.txt
 workspace/
 assets/cache/
 dist/
-tools/sadtalker/
+tools/
 assets/portraits/
 assets/backgrounds/**/*.mp4
 assets/backgrounds/**/*.mkv
@@ -26,6 +26,7 @@ assets/backgrounds/**/*.webm
 assets/backgrounds/**/*.mov
 assets/music/*
 assets/sfx/*
+assets/movies/*
 !assets/**/README.md
 !assets/**/.gitkeep
 

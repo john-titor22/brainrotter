@@ -51,6 +51,24 @@ MOOD_QUERIES: dict[str, list[str]] = {
     "funny": ["no copyright quirky comedic background music instrumental",
               "royalty free goofy playful music no copyright",
               "no copyright silly ukulele background music"],
+    "sad": ["no copyright sad emotional piano background music",
+            "royalty free melancholic ambient instrumental no copyright",
+            "no copyright slow sad strings underscore"],
+    "dramatic": ["no copyright dramatic emotional cinematic music instrumental",
+                 "royalty free dramatic piano and strings no copyright",
+                 "no copyright emotional build up cinematic"],
+    "nostalgic": ["no copyright nostalgic warm lofi background music",
+                  "royalty free wistful retro synth instrumental no copyright",
+                  "no copyright bittersweet memory music box"],
+    "phonk": ["no copyright phonk type beat instrumental",
+              "royalty free drift phonk background music no copyright",
+              "no copyright aggressive phonk instrumental"],
+    "dreamy": ["no copyright dreamy ethereal ambient background music",
+               "royalty free dreamy synth pad instrumental no copyright",
+               "no copyright soft ambient shimmer music"],
+    "quirky": ["no copyright quirky playful pizzicato background music",
+               "royalty free whimsical eccentric instrumental no copyright",
+               "no copyright oddball comedic underscore"],
 }
 
 
@@ -76,11 +94,40 @@ def cached(mood: str | None = None) -> dict[str, list[Path]]:
     root = get_settings().music_cache_path
     out: dict[str, list[Path]] = {}
     for d in root.iterdir() if root.exists() else []:
-        if d.is_dir() and (mood is None or d.name == mood):
+        if d.is_dir() and not d.name.startswith("_") and (mood is None or d.name == mood):
             t = _tracks_in(d)
             if t:
                 out[d.name] = t
     return out
+
+
+def _slug(text: str) -> str:
+    import re
+
+    return (re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:60]) or "vibe"
+
+
+def ensure_query(query: str, *, count: int | None = None) -> list[str]:
+    """Fetch a couple of tracks for one specific music brief (the Director's
+    per-video vibe), cached under ``cache/music/_q/<slug>/``. Returns paths;
+    empty if disabled / nothing found."""
+    s = get_settings()
+    if not (query and s.music.enabled):
+        return []
+    count = count or s.music.per_video_tracks
+    dst = s.music_cache_path / "_q" / _slug(query)
+    have = _tracks_in(dst)
+    if len(have) >= count or not s.music.allow_youtube:
+        return [str(p) for p in have]
+    try:
+        _sync_into(dst, [
+            f"{query} instrumental no copyright",
+            f"{query} background music royalty free",
+            f"no copyright {query}",
+        ], count=count - len(have))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music query fetch failed for %r: %s", query, exc)
+    return [str(p) for p in _tracks_in(dst)]
 
 
 def library(mood: str) -> list[Path]:
@@ -123,6 +170,17 @@ def ensure(mood: str, *, count: int | None = None) -> list[str]:
 def sync(mood: str, *, count: int | None = None) -> list[str]:
     """Download up to ``count`` new tracks for one mood."""
     settings = get_settings()
+    count = count or settings.music.per_mood
+    return _sync_into(
+        _cache_dir(mood),
+        MOOD_QUERIES.get(mood, [f"no copyright {mood} background music"]),
+        count=count,
+    )
+
+
+def _sync_into(dst: Path, queries: list[str], *, count: int) -> list[str]:
+    """Download up to ``count`` new tracks matching ``queries`` into ``dst``."""
+    settings = get_settings()
     if not settings.music.allow_youtube:
         raise RuntimeError("music.allow_youtube is false — add MP3s to assets/music/<mood>/ instead")
     try:
@@ -130,8 +188,6 @@ def sync(mood: str, *, count: int | None = None) -> list[str]:
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("yt-dlp not installed (pip install 'yt-dlp[default]')") from exc
 
-    count = count or settings.music.per_mood
-    dst = _cache_dir(mood)
     raw = dst / "_raw"
     if raw.exists():
         shutil.rmtree(raw, ignore_errors=True)
@@ -168,7 +224,7 @@ def sync(mood: str, *, count: int | None = None) -> list[str]:
     if node:
         ydl_opts["js_runtimes"]["node"] = {"path": node}
 
-    targets = [f"ytsearch{count + 2}:{q}" for q in MOOD_QUERIES.get(mood, [f"no copyright {mood} background music"])]
+    targets = [f"ytsearch{count + 2}:{q}" for q in queries]
     deadline = time.time() + mc.sync_budget_seconds
     consecutive_fail = 0
     got: list[str] = []
@@ -198,7 +254,7 @@ def sync(mood: str, *, count: int | None = None) -> list[str]:
                 if len(got) >= count:
                     break
     shutil.rmtree(raw, ignore_errors=True)
-    log.info("music sync %s: +%d track(s)", mood, len(got))
+    log.info("music sync %s: +%d track(s)", dst.name, len(got))
     return got
 
 

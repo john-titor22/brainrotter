@@ -15,6 +15,7 @@
     --bad: #f87171; --work: #fbbf24;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   header { padding: 16px 24px; border-bottom: 1px solid var(--line);
@@ -30,6 +31,8 @@
   button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; margin-top: 14px; }
   button:hover { filter: brightness(1.1); }
   button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  button.mini { width: auto; margin: 0 0 0 8px; padding: 3px 9px; font-size: 12px; font-weight: 600;
+    background: var(--panel2); color: var(--accent); border: 1px solid var(--line); border-radius: 6px; }
   .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
   .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -50,14 +53,35 @@
   .empty { color: var(--dim); padding: 24px; text-align: center; }
   .bar { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
   .bar > i { display: block; height: 100%; background: var(--accent); }
+  nav.tabs { display: flex; gap: 6px; margin-left: auto; }
+  nav.tabs button { width: auto; margin: 0; padding: 6px 14px; background: var(--panel2);
+    color: var(--dim); border: 1px solid var(--line); font-weight: 600; font-size: 13px; }
+  nav.tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  main.solo { grid-template-columns: 1fr; max-width: 760px; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center;
+    color: var(--dim); cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.hover { border-color: var(--accent); background: rgba(180,107,255,.06); color: var(--text); }
+  .movie { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+    padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; margin-bottom: 10px; }
+  .movie .n { font-weight: 600; }
+  .movie .acts { display: flex; gap: 8px; align-items: center; }
+  .movie .acts input { width: 62px; text-align: center; }
+  .movie .acts button { width: auto; margin: 0; padding: 7px 12px; font-size: 13px; }
+  .x { background: transparent; border: none; color: var(--dim); cursor: pointer; font-size: 16px; width: auto; margin: 0; padding: 4px 6px; }
+  .x:hover { color: var(--bad); }
 </style>
 </head>
 <body>
 <header>
   <h1>BRAINROTTER</h1>
-  <span class="tag">the brainrot video factory &mdash; local dashboard</span>
+  <span class="tag">the brainrot video factory</span>
+  <nav class="tabs">
+    <button id="tab-dash" class="on" onclick="showTab('dash')">Dashboard</button>
+    <button id="tab-movie" onclick="showTab('movie')">Movie Recap</button>
+  </nav>
 </header>
-<main>
+
+<main id="view-dash">
   <div class="col">
     <div class="panel">
       <h2>Queue</h2>
@@ -69,14 +93,29 @@
       <button class="ghost" style="width:100%;margin-top:8px" onclick="clearHistory()">
         Clear finished history
       </button>
+      <div id="publishbox" class="sub" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px" hidden>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="autopublish" style="width:auto" onchange="toggleAutoPublish()">
+          Auto-publish finished videos
+        </label>
+        <div id="publishstat" class="sub" style="margin-top:4px"></div>
+        <button class="ghost" style="width:100%;margin-top:8px" onclick="publishAllPending()">
+          Publish all unpublished now
+        </button>
+      </div>
     </div>
 
     <div class="panel">
       <h2>New job</h2>
       <label>Format</label>
-      <select id="format"><option value="">Let the Director decide</option></select>
+      <select id="format" onchange="onFormatChange()"><option value="">Let the Director decide</option></select>
       <label>Topic <span style="opacity:.6">(optional &mdash; overrides trends)</span></label>
       <input id="topic" placeholder="e.g. petty revenge on a landlord">
+      <div id="comphint" class="sub" style="margin-top:4px" hidden>
+        Compilation: a supercut of short sourced clips. Topic = a theme
+        (funny, animals, satisfying, wholesome, fails, amazing). No voice,
+        language or visuals &mdash; the clips bring their own.
+      </div>
       <div class="row">
         <div style="flex:1"><label>Language</label>
           <select id="language" onchange="fillVoices()">
@@ -86,10 +125,32 @@
           <select id="voice"><option value="">Director decides</option></select></div>
       </div>
       <div class="row">
-        <div><label>Count</label><input id="count" type="number" value="1" min="1" max="50"></div>
+        <div style="flex:1"><label>Visuals</label>
+          <select id="visuals">
+            <option value="">Director decides</option>
+            <option value="footage">Footage</option>
+            <option value="generated">AI-generated stills</option>
+          </select></div>
+        <div style="flex:1"><label>Count</label><input id="count" type="number" value="1" min="1" max="50"></div>
+      </div>
+      <div id="visualshint" class="sub" style="margin-top:4px" hidden></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+        <input type="checkbox" id="series" style="width:auto" onchange="toggleSeries()">
+        Related story (multi-part series)
+      </label>
+      <div id="seriesopts" hidden>
+        <label>Parts <span style="opacity:.6">— the Director wraps the story up by then</span></label>
+        <input id="parts" type="number" value="9" min="3" max="9">
+        <div class="sub" style="margin-top:6px">Part 1&hellip;N of one story, same narrator &amp; music,
+          continuity between parts. Backgrounds are Creative-Commons b-roll that fits the story.</div>
       </div>
       <button onclick="queueJob()">Queue it</button>
       <div class="sub" style="margin-top:8px">Jobs run one at a time — the next starts only when the current finishes.</div>
+    </div>
+
+    <div class="panel" id="seriespanel" hidden>
+      <h2>Series</h2>
+      <div id="serieslist"></div>
     </div>
 
     <div class="panel">
@@ -109,6 +170,39 @@
   </div>
 </main>
 
+<main id="view-movie" class="solo" hidden>
+  <div class="col">
+    <div class="panel">
+      <h2>Add a movie</h2>
+      <div id="drop" class="drop"
+           onclick="document.getElementById('mfile').click()">
+        <div><b>Drop a movie file here</b> or click to choose</div>
+        <div class="sub" style="margin-top:6px">.mp4 .mkv .mov .webm .avi — stays local, gitignored</div>
+      </div>
+      <input id="mfile" type="file" accept="video/*,.mkv,.mov,.avi" hidden onchange="uploadMovie(this.files[0])">
+      <div id="uprog" class="bar" hidden><i style="width:0"></i></div>
+      <div id="upmsg" class="sub" style="margin-top:6px"></div>
+      <label style="margin-top:14px">&hellip;or a path to a movie already on this computer</label>
+      <div class="row">
+        <input id="mpath" placeholder="C:\Movies\The Matrix.mkv" style="flex:3">
+        <button style="flex:1;margin-top:0" onclick="linkMovie()">Add</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Movies</h2>
+      <div id="movies"><div class="empty">No movies yet.</div></div>
+      <div class="sub">Cutting a movie makes a Part 1&hellip;N series — muted 9:16 montage of each
+        chunk with a narrator recapping it. Dialogue is transcribed locally.</div>
+    </div>
+
+    <div class="panel" id="movieseriespanel" hidden>
+      <h2>Recap series</h2>
+      <div id="movieseries"></div>
+    </div>
+  </div>
+</main>
+
 <script>
 const $ = s => document.querySelector(s);
 const WORK = new Set(["queued","directing","writing","synthesizing","aligning","assembling","rendering"]);
@@ -119,17 +213,59 @@ async function api(path, opts) {
   return r.json();
 }
 
+function toggleSeries() {
+  const on = $("#series").checked;
+  $("#seriesopts").hidden = !on;
+  $("#count").disabled = on;
+}
+
+function onFormatChange() {
+  const isComp = $("#format").value === "compilation";
+  $("#comphint").hidden = !isComp;
+  for (const id of ["language", "voice", "visuals"]) $("#" + id).disabled = isComp;
+  $("#topic").placeholder = isComp
+    ? "theme: funny · animals · satisfying · wholesome · fails · amazing"
+    : "e.g. petty revenge on a landlord";
+}
+
 async function queueJob() {
+  const isSeries = $("#series").checked;
   const body = {
     format_id: $("#format").value || null,
     topic: $("#topic").value.trim() || null,
     language: $("#language").value || null,
     voice: $("#voice").value || null,
+    visuals: $("#visuals").value || null,
     count: parseInt($("#count").value) || 1,
+    series: isSeries,
+    parts: isSeries ? (parseInt($("#parts").value) || 9) : null,
   };
-  try { await api("/api/jobs", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body)});
-    $("#topic").value = ""; loadJobs();
+  try {
+    const r = await api("/api/jobs", {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body)});
+    $("#topic").value = "";
+    if (r.series) alert(`Series queued: "${r.series.title}" — ${r.series.n_parts} parts.`);
+    loadJobs(); loadSeries();
   } catch (e) { alert(e.message); }
+}
+
+async function loadSeries() {
+  let data;
+  try { data = await api("/api/series"); } catch (e) { return; }
+  const active = data.series || [];
+  const panel = $("#seriespanel");
+  if (!active.length) { panel.hidden = true; return; }
+  panel.hidden = false;
+  $("#serieslist").innerHTML = active.slice(0, 8).map(s => {
+    const pct = s.n_parts ? Math.round(100 * s.parts_done / s.n_parts) : 0;
+    const tag = s.state === "aborted" ? ' <span style="color:var(--bad)">aborted</span>'
+      : s.state === "done" ? ' <span style="color:var(--good)">complete</span>' : "";
+    return `<div style="margin-bottom:10px">
+      <div class="sub" style="color:var(--text)">${esc(s.title || s.topic || "series")}${tag}</div>
+      <div class="sub">${s.parts_done}/${s.n_parts} parts${s.parts_failed ? ` · ${s.parts_failed} failed` : ""}
+        &nbsp;·&nbsp; ${esc(s.format_id || "")} ${s.language && s.language !== "en" ? "· " + s.language : ""}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+    </div>`;
+  }).join("");
 }
 
 let VOICES = {};
@@ -157,32 +293,105 @@ function badge(state) {
   return `<span class="badge ${cls}">${state}</span>`;
 }
 
+let PUBLISH = { configured:false, enabled:false, auto:false, platforms:[], providers:[] };
+
+function pubBlock(j) {
+  if (j.state !== "done") return "";
+  const p = j.publish || {};
+  const urls = p.urls || {};
+  if (p.published_at && Object.keys(urls).length)
+    return `<div class="sub" style="margin-top:6px">published &nbsp; ` +
+      Object.entries(urls).map(([k,u]) => `<a href="${esc(u)}" target="_blank">${esc(k)}</a>`).join(" &middot; ") +
+      `</div>`;
+  if (p.published_at)
+    return `<div class="sub" style="margin-top:6px">published${p.local_deleted ? " &middot; local file freed" : ""}</div>`;
+  if (p.error)
+    return `<div class="sub" style="margin-top:6px;color:var(--bad)">publish failed: ${esc(p.error)}
+      <button class="mini" onclick="publishJob('${j.id}')">retry</button></div>`;
+  if (PUBLISH.configured)
+    return `<div class="sub" style="margin-top:6px"><button class="mini" onclick="publishJob('${j.id}')">
+      publish to ${PUBLISH.platforms.join(" / ")}</button></div>`;
+  return "";
+}
+
 function jobCardHTML(j) {
   const b = j.brief || {}, r = j.result || {}, s = j.script || {};
+  const p = j.publish || {};
   const right = j.state === "done"
-    ? `<video controls preload="metadata" playsinline src="/api/video/${j.id}"></video>`
+    ? (p.local_deleted
+        ? `<div class="sub">video published &amp; freed from disk</div>`
+        : `<video controls preload="metadata" playsinline src="/api/video/${j.id}"></video>`)
     : j.state === "failed"
     ? `<div class="sub" style="color:var(--bad)">${esc(j.error || "failed")}</div>`
     : j.state === "canceled"
     ? `<div class="sub">canceled</div>`
     : `<div class="sub">working&hellip;<div class="bar"><i style="width:${progress(j.state)}%"></i></div></div>`;
+  const part = j.part ? `<span class="badge b-work" style="background:rgba(180,107,255,.15);color:var(--accent)">Part ${j.part}</span> &nbsp; ` : "";
   return `<div class="meta">
       <div class="title">${esc(s.title || b.topic || j.topic || "(pending)")}</div>
-      <div class="sub">${badge(j.state)} &nbsp; ${esc(b.format_id || j.format_id || "?")}
+      <div class="sub">${part}${badge(j.state)} &nbsp; ${esc(b.format_id || j.format_id || "?")}
         ${r.seconds ? ` &nbsp; rendered in ${r.seconds}s` : ""}
         ${r.duration ? ` &nbsp; ${Math.round(r.duration)}s long` : ""}</div>
       ${b.hook ? `<div class="sub">&ldquo;${esc(b.hook)}&rdquo;</div>` : ""}
       ${b.rationale ? `<div class="why">${esc(b.rationale)}</div>` : ""}
+      ${pubBlock(j)}
     </div>
     <div>${right}</div>`;
+}
+
+async function publishJob(id) {
+  const el = event && event.target;
+  if (el) { el.disabled = true; el.textContent = "publishing…"; }
+  try {
+    await api("/api/publish", {method:"POST", headers:{"content-type":"application/json"},
+                               body: JSON.stringify({job_id: id})});
+    loadJobs();
+  } catch (e) { alert(e.message); if (el) { el.disabled = false; el.textContent = "publish"; } }
 }
 
 // Incremental render: never touch an existing card's DOM node unless its state
 // actually changed, and never MOVE a node (moving a <video> resets playback).
 // The API returns jobs newest-first; new ones are prepended, gone ones removed.
 const cardSig = {};
+async function toggleAutoPublish() {
+  try {
+    await api("/api/publish/settings", {method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({auto_publish: $("#autopublish").checked})});
+  } catch (e) { alert(e.message); }
+  loadJobs();
+}
+async function publishAllPending() {
+  if (!confirm("Publish every unpublished video now?")) return;
+  try { const r = await api("/api/publish/all", {method:"POST"});
+        alert(`published ${r.done}, failed ${r.failed}`); loadJobs(); }
+  catch (e) { alert(e.message); }
+}
+function renderPublishBox() {
+  const box = $("#publishbox");
+  box.hidden = !(PUBLISH.enabled || PUBLISH.configured);
+  if (box.hidden) return;
+  $("#autopublish").checked = !!PUBLISH.auto;
+  $("#publishstat").textContent = PUBLISH.status || "";
+  const provs = PUBLISH.providers || [];
+  let pl = $("#publishprovs");
+  if (!pl) {
+    pl = document.createElement("div");
+    pl.id = "publishprovs";
+    pl.className = "sub";
+    pl.style.marginTop = "4px";
+    $("#publishstat").after(pl);
+  }
+  pl.innerHTML = provs.map(x => {
+    const mark = x.authed ? "&#10003;" : (x.configured ? "needs auth" : "&mdash;");
+    const col = x.authed ? "var(--ok,#3a3)" : (x.configured ? "var(--warn,#c90)" : "var(--muted,#888)");
+    return `<span style="color:${col};margin-right:10px">${esc(x.name)} ${mark}</span>`;
+  }).join("");
+}
+
 async function loadJobs() {
-  const { jobs } = await api("/api/jobs");
+  const resp = await api("/api/jobs");
+  const jobs = resp.jobs;
+  if (resp.publish) { PUBLISH = resp.publish; renderPublishBox(); }
   const el = $("#jobs");
   if (!jobs.length) {
     if (!el.querySelector(".empty"))
@@ -196,7 +405,10 @@ async function loadJobs() {
   // walk oldest-first so prepends end up in newest-first order
   [...jobs].reverse().forEach(j => {
     seen.add(j.id);
-    const sig = JSON.stringify([j.state, (j.script||{}).title, (j.result||{}).seconds, j.error]);
+    const pb = j.publish || {};
+    const sig = JSON.stringify([j.state, (j.script||{}).title, (j.result||{}).seconds, j.error,
+                                pb.published_at, pb.local_deleted, pb.error, Object.keys(pb.urls||{}).length,
+                                PUBLISH.configured]);
     let card = document.getElementById("job-" + j.id);
     if (!card) {
       card = document.createElement("div");
@@ -256,10 +468,112 @@ async function clearHistory() {
   loadQueue(); loadJobs();
 }
 
+// --- tabs -----------------------------------------------------------------
+function showTab(name) {
+  $("#view-dash").hidden = name !== "dash";
+  $("#view-movie").hidden = name !== "movie";
+  $("#tab-dash").classList.toggle("on", name === "dash");
+  $("#tab-movie").classList.toggle("on", name === "movie");
+  if (name === "movie") { loadMovies(); loadMovieSeries(); }
+  try { localStorage.setItem("br_tab", name); } catch (e) {}
+}
+
+// --- movie recap tab ----------------------------------------------------
+function _xhrUpload(file) {
+  return new Promise((res, rej) => {
+    const fd = new FormData(); fd.append("file", file);
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/movies/upload");
+    x.upload.onprogress = e => {
+      if (e.lengthComputable)
+        $("#uprog i").style.width = Math.round(100 * e.loaded / e.total) + "%";
+    };
+    x.onload = () => x.status < 300 ? res(JSON.parse(x.responseText))
+                                   : rej(new Error(JSON.parse(x.responseText).detail || x.statusText));
+    x.onerror = () => rej(new Error("upload failed"));
+    x.send(fd);
+  });
+}
+async function uploadMovie(file) {
+  if (!file) return;
+  $("#uprog").hidden = false; $("#uprog i").style.width = "0";
+  $("#upmsg").textContent = "uploading " + file.name + " …";
+  try {
+    const r = await _xhrUpload(file);
+    $("#upmsg").textContent = "added " + r.file + " (" + r.size_mb + " MB)";
+    loadMovies();
+  } catch (e) { $("#upmsg").textContent = "✗ " + e.message; }
+  finally { setTimeout(() => { $("#uprog").hidden = true; }, 1200); }
+}
+async function linkMovie() {
+  const p = $("#mpath").value.trim();
+  if (!p) return;
+  try {
+    const r = await api("/api/movies/link", {method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({path: p})});
+    $("#upmsg").textContent = "added " + r.file; $("#mpath").value = ""; loadMovies();
+  } catch (e) { $("#upmsg").textContent = "✗ " + e.message; }
+}
+function _fmt(sec) { sec = Math.round(sec); return (sec/60|0) + "m" + String(sec%60).padStart(2,"0") + "s"; }
+async function loadMovies() {
+  let data; try { data = await api("/api/movies"); } catch (e) { return; }
+  const el = $("#movies");
+  if (!data.movies.length) { el.innerHTML = '<div class="empty">No movies yet — drop one above.</div>'; return; }
+  el.innerHTML = data.movies.map(m => {
+    const s = m.series;
+    const status = s
+      ? `<span class="sub">series: ${s.parts_done}/${s.n_parts}${s.parts_failed?` · ${s.parts_failed}✗`:""} · ${s.state}</span>`
+      : "";
+    return `<div class="movie">
+      <div><div class="n">${esc(m.title)}</div>
+        <div class="sub">${esc(m.file)} · ${_fmt(m.seconds)} · ${m.size_mb} MB ${status}</div></div>
+      <div class="acts">
+        <input type="number" id="p-${esc(m.file)}" title="parts (blank = auto)" placeholder="auto" min="3" max="40">
+        <button onclick="cutMovie('${esc(m.file).replace(/'/g,"\\'")}')">${s?"Re-cut":"Cut into recap"}</button>
+        <button class="x" title="delete" onclick="deleteMovie('${esc(m.file).replace(/'/g,"\\'")}')">✕</button>
+      </div></div>`;
+  }).join("");
+}
+async function cutMovie(file) {
+  const pv = parseInt(($("#p-"+file)||{}).value);
+  try {
+    const r = await api("/api/movies/recap", {method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({file, parts: pv || null})});
+    alert(`"${r.series.title}" — ${r.series.n_parts} parts queued.`);
+    loadMovies(); loadMovieSeries();
+  } catch (e) { alert(e.message); }
+}
+async function deleteMovie(file) {
+  if (!confirm("Delete " + file + " ? (the movie file, not any videos already made)")) return;
+  try { await api("/api/movies/" + encodeURIComponent(file), {method:"DELETE"}); loadMovies(); }
+  catch (e) { alert(e.message); }
+}
+async function loadMovieSeries() {
+  let data; try { data = await api("/api/series"); } catch (e) { return; }
+  const rows = (data.series || []).filter(s => s.format_id === "movie_recap");
+  const panel = $("#movieseriespanel");
+  if (!rows.length) { panel.hidden = true; return; }
+  panel.hidden = false;
+  $("#movieseries").innerHTML = rows.map(s => {
+    const pct = s.n_parts ? Math.round(100 * s.parts_done / s.n_parts) : 0;
+    return `<div style="margin-bottom:12px">
+      <div class="sub" style="color:var(--text)">${esc(s.title || s.topic)}</div>
+      <div class="sub">${s.parts_done}/${s.n_parts} parts${s.parts_failed?` · ${s.parts_failed} failed`:""} · ${s.state}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join("");
+}
+(function () {
+  const d = $("#drop");
+  ["dragenter","dragover"].forEach(ev => d.addEventListener(ev, e => { e.preventDefault(); d.classList.add("hover"); }));
+  ["dragleave","drop"].forEach(ev => d.addEventListener(ev, e => { e.preventDefault(); d.classList.remove("hover"); }));
+  d.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) uploadMovie(f); });
+})();
+
 async function loadFormats() {
   const { formats } = await api("/api/formats");
+  const pickable = formats.filter(f => !f.requires_explicit);
   $("#format").innerHTML = '<option value="">Let the Director decide</option>' +
-    formats.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+    pickable.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
   $("#formats tbody").innerHTML =
     `<tr><th>format</th><th>published</th><th>score</th></tr>` +
     formats.map(f => `<tr><td>${f.id}</td><td>${f.stats.n_published||0}</td>
@@ -274,9 +588,24 @@ async function loadTrends() {
       <td>${esc(s.title.slice(0,48))}</td></tr>`).join("");
 }
 
-loadFormats(); loadTrends(); loadJobs(); loadQueue();
+async function loadCapabilities() {
+  try {
+    const c = await api("/api/capabilities");
+    const hint = $("#visualshint");
+    if (!c.generated_visuals) {
+      hint.hidden = false;
+      hint.textContent = "AI stills: " + c.generated_visuals_status + " — falls back to footage until then.";
+    } else { hint.hidden = true; }
+  } catch (e) {}
+}
+
+loadFormats(); loadTrends(); loadJobs(); loadQueue(); loadSeries(); loadCapabilities();
 loadVoices().then(fillVoices);
-setInterval(() => { loadJobs(); loadQueue(); }, 2500);
+try { if (localStorage.getItem("br_tab") === "movie") showTab("movie"); } catch (e) {}
+setInterval(() => {
+  loadJobs(); loadQueue(); loadSeries();
+  if (!$("#view-movie").hidden) { loadMovies(); loadMovieSeries(); }
+}, 2500);
 setInterval(loadFormats, 15000);
 </script>
 </body>

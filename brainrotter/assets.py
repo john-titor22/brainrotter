@@ -22,19 +22,59 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 PLACEHOLDER_CATEGORIES = {"testpattern"}
 
 # "@name" categories are footage OF a specific public figure (speeches,
-# interviews) fetched for the anime_figure format. They are NOT general
-# background gameplay and must never be blended into a normal video — only
-# returned when asked for by that exact category name.
+# interviews) fetched for the anime_figure format. "~series..." categories are
+# Creative-Commons b-roll pulled for one part of a "related story" series. Both
+# are special-purpose: never blended into a normal video, only returned when
+# asked for by that exact category name.
 FIGURE_PREFIX = "@"
+SERIES_PREFIX = "~"
+
+
+def _is_special(category: str) -> bool:
+    return category.startswith(FIGURE_PREFIX) or category.startswith(SERIES_PREFIX)
+
+
+# The vendored engine rejects any material whose short side is under ~470 px
+# ("no valid local video materials"). A 270-wide vertical clip that slipped into
+# a gameplay category is useless as a full-screen background anyway.
+_MIN_CLIP_DIMENSION = 472
+_dim_cache: dict[tuple[str, float, int], bool] = {}
+
+
+def _big_enough(p: Path) -> bool:
+    import shutil
+    import subprocess
+
+    try:
+        key = (str(p), p.stat().st_mtime, p.stat().st_size)
+    except OSError:
+        return False
+    if key in _dim_cache:
+        return _dim_cache[key]
+    ok = True
+    probe = shutil.which("ffprobe") or "ffprobe"
+    try:
+        out = subprocess.run(
+            [probe, "-v", "quiet", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "csv=p=0:s=x", str(p)],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.strip()
+        w, h = (int(x) for x in out.split("x")[:2])
+        ok = min(w, h) >= _MIN_CLIP_DIMENSION
+    except Exception:
+        ok = True                    # can't probe — give it the benefit of the doubt
+    _dim_cache[key] = ok
+    return ok
 
 
 def _is_clip(p: Path) -> bool:
-    # skip download scratch dirs and partials
+    # skip download scratch dirs, partials, and too-small-for-the-engine clips
     return (
         p.suffix.lower() in VIDEO_EXTS
         and p.is_file()
         and "_raw" not in p.parts
         and not p.name.endswith(".part")
+        and _big_enough(p)
     )
 
 
@@ -66,6 +106,11 @@ def categories() -> list[str]:
     return sorted(index())
 
 
+def available_categories() -> list[str]:
+    """Real gameplay-background categories that actually have clips on disk."""
+    return sorted(_gameplay_categories(index()))
+
+
 def has_any() -> bool:
     return bool(_gameplay_categories(index()))
 
@@ -76,10 +121,10 @@ def _real_categories(idx: dict[str, list[Path]]) -> dict[str, list[Path]]:
 
 
 def _gameplay_categories(idx: dict[str, list[Path]]) -> dict[str, list[Path]]:
-    """Real background gameplay only — no placeholders, no @figure footage."""
+    """Real background gameplay only — no placeholders, no @figure / ~series footage."""
     return {
         c: v for c, v in idx.items()
-        if c not in PLACEHOLDER_CATEGORIES and not c.startswith(FIGURE_PREFIX)
+        if c not in PLACEHOLDER_CATEGORIES and not _is_special(c)
     }
 
 
@@ -96,22 +141,35 @@ def _try_fetch(category: str | None, count: int) -> None:
         pass
 
 
+def _order_by_freshness(pool: list[Path], exclude: tuple[str, ...], rng: random.Random) -> list[Path]:
+    """Shuffle, then float clips whose basename isn't in ``exclude`` (the last
+    few videos' backgrounds) to the front — so the feed stops repeating even
+    when only a couple of categories are cached."""
+    recent = set(exclude)
+    shuffled = list(pool)
+    rng.shuffle(shuffled)
+    shuffled.sort(key=lambda p: p.name in recent)   # False (fresh) sorts first
+    return shuffled
+
+
 def pick(category: str | None = None, *, count: int = 1,
-         seed: int | None = None, allow_fetch: bool = True) -> list[str]:
+         seed: int | None = None, allow_fetch: bool = True,
+         exclude: tuple[str, ...] = ()) -> list[str]:
     """Up to ``count`` clip paths for a category.
 
     Never returns placeholder clips when real footage exists, and never mixes
     the two. Auto-fetch only runs on a *cold* library (no real footage at all) —
     otherwise renders would block on slow downloads. Grow the pool with
-    ``brainrotter footage sync``.
+    ``brainrotter footage sync``. ``exclude`` = basenames of recently-used clips
+    to push to the back.
     """
     idx = index()
 
-    # An explicit "@figure" request is served straight from that category —
-    # this is the only path that ever touches figure footage.
-    if category and category.startswith(FIGURE_PREFIX):
+    # An explicit "@figure" / "~series" request is served straight from that
+    # category — the only path that ever touches special-purpose footage.
+    if category and _is_special(category):
         pool = list(_real_categories(idx).get(category, []))
-        random.Random(seed).shuffle(pool)
+        pool = _order_by_freshness(pool, exclude, random.Random(seed))
         return [str(p) for p in pool[: max(1, count)]]
 
     real = _gameplay_categories(idx)
@@ -126,24 +184,27 @@ def pick(category: str | None = None, *, count: int = 1,
         pool = list(real[category])
     else:
         pool = [p for clips in real.values() for p in clips]
-    rng.shuffle(pool)
+    pool = _order_by_freshness(pool, exclude, rng)
     return [str(p) for p in pool[: max(1, count)]]
 
 
-def pick_mixed(categories: list[str], *, count: int = 3, seed: int | None = None) -> list[str]:
+def pick_mixed(categories: list[str], *, count: int = 3, seed: int | None = None,
+               exclude: tuple[str, ...] = ()) -> list[str]:
     """Clips spanning several categories so one video cuts between games.
 
     Only categories that actually resolve to real footage are used; placeholder
-    footage is never blended in.
+    footage is never blended in. ``exclude`` = recently-used clip basenames.
     """
     lanes: list[list[str]] = []
     for i, cat in enumerate(categories or []):
-        got = pick(cat, count=count, seed=(seed or 0) + i, allow_fetch=True)
+        got = pick(cat, count=count, seed=(seed or 0) + i, allow_fetch=True,
+                   exclude=exclude)
         if got:
             lanes.append(got)
 
     if not lanes:
-        fallback = pick(None, count=count, seed=seed, allow_fetch=True)
+        fallback = pick(None, count=count, seed=seed, allow_fetch=True,
+                        exclude=exclude)
         return fallback
 
     out: list[str] = []

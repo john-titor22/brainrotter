@@ -26,6 +26,12 @@ log = logging.getLogger("brainrotter.footage")
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
 
+# yt-dlp's exact `license` string for a YouTube video marked reusable.
+CC_LICENSE = "Creative Commons Attribution license (reuse allowed)"
+# Category prefix for narrative b-roll pulled for a series (kept out of the
+# gameplay pools — see assets.SERIES_PREFIX).
+SERIES_PREFIX = "~"
+
 
 def cached(category: str | None = None) -> dict[str, list[Path]]:
     root = get_settings().footage_path
@@ -53,7 +59,8 @@ def slugify(name: str) -> str:
 
 
 def ensure(category: str, *, count: int | None = None,
-           queries: list[str] | None = None) -> list[str]:
+           queries: list[str] | None = None,
+           require_license: str | None = None) -> list[str]:
     """Guarantee at least ``count`` clips for a category; download if short."""
     settings = get_settings()
     count = count or settings.footage.per_category
@@ -62,7 +69,8 @@ def ensure(category: str, *, count: int | None = None,
         return [str(p) for p in have]
     if not settings.footage.allow_youtube:
         return [str(p) for p in have]
-    fetched = sync(category, count=count - len(have), queries=queries)
+    fetched = sync(category, count=count - len(have), queries=queries,
+                   require_license=require_license)
     return [str(p) for p in cached(category).get(category, [])] or fetched
 
 
@@ -72,9 +80,30 @@ def ensure_figure(name: str, *, count: int | None = None) -> list[str]:
                   queries=registry.figure_queries(name))
 
 
+def ensure_narrative(series_id: str, part: int, queries: list[str], *,
+                     count: int | None = None) -> list[str]:
+    """Creative-Commons b-roll for one part of a series, matching its scene.
+
+    Kept in a per-part ``~<series>-<part>`` category so it never blends into the
+    gameplay pools. If nothing Creative-Commons turns up and ``series.require_cc``
+    is off, retries unfiltered; the caller falls back to gameplay if still empty.
+    """
+    s = get_settings()
+    cat = f"{SERIES_PREFIX}{series_id}-{part}"
+    n = count or s.series.broll_per_part
+    lic = CC_LICENSE if s.series.require_cc else None
+    return ensure(cat, count=n, queries=queries, require_license=lic)
+
+
 def sync(category: str, *, count: int | None = None,
-         queries: list[str] | None = None) -> list[str]:
-    """Download up to ``count`` new source videos for one category."""
+         queries: list[str] | None = None,
+         require_license: str | None = None) -> list[str]:
+    """Download up to ``count`` new source videos for one category.
+
+    ``require_license`` (e.g. ``CC_LICENSE``) restricts downloads to videos
+    carrying that yt-dlp ``license`` string — used for series b-roll so the
+    footage is genuinely free to reuse.
+    """
     settings = get_settings()
     if not settings.footage.allow_youtube:
         raise RuntimeError("footage.allow_youtube is false — enable it or add clips manually")
@@ -116,7 +145,10 @@ def sync(category: str, *, count: int | None = None,
         # True would pull the whole file to align keyframes.
         "force_keyframes_at_cuts": False,
         # prefer short-ish uploads; skip livestreams
-        "match_filter": yt_dlp.utils.match_filter_func("duration > 45 & !is_live"),
+        "match_filter": yt_dlp.utils.match_filter_func(
+            f'duration > 15 & duration < 1800 & !is_live & license = "{require_license}"'
+            if require_license else "duration > 45 & !is_live"
+        ),
     }
     fc = settings.footage
     cookie_txt = Path(fc.cookies_file) if fc.cookies_file else (settings.root / "assets" / "cookies.txt")
@@ -199,9 +231,18 @@ def _trim(src: Path, dst: Path, settings) -> Path | None:
         log.warning("source too short (%.1fs), skipping: %s", src_dur, src.name)
         return None
     skip = 15 if src_dur > secs + 20 else 0        # skip intro only if room
+    # Force a uniform landscape frame: scale up to cover 854xH then centre-crop.
+    # Guarantees both dimensions clear the engine's 472px minimum and every
+    # background clip is the same size (safe to concat). A portrait source that
+    # slipped into a gameplay category loses its edges — it was the wrong clip
+    # for a full-screen background anyway.
+    hh = max(h, 480)
+    ww = (hh * 16) // 9
+    vf = (f"scale={ww}:{hh}:force_original_aspect_ratio=increase,"
+          f"crop={ww}:{hh},setsar=1")
     cmd = [
         ff, "-y", "-ss", str(skip), "-i", str(src), "-t", str(secs),
-        "-an", "-vf", f"scale=-2:{h}", "-c:v", "libx264", "-preset", "veryfast",
+        "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
         "-crf", "27", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dst),
     ]
     try:
@@ -217,3 +258,43 @@ def _trim(src: Path, dst: Path, settings) -> Path | None:
 
 def sync_all(*, per_category: int | None = None) -> dict[str, int]:
     return {c: len(sync(c, count=per_category)) for c in registry.categories()}
+
+
+_growing = False
+
+
+def autogrow() -> str | None:
+    """Best-effort: if the cached gameplay pool is thin, download ONE more
+    category. Meant to be called in a daemon thread after a render — never
+    raises, and only one runs at a time.
+
+    Returns the category it grew, or None.
+    """
+    global _growing
+    settings = get_settings()
+    target = settings.footage.auto_grow_to
+    if _growing or target <= 0 or not settings.footage.allow_youtube:
+        return None
+    try:
+        from .. import assets
+
+        have = assets.available_categories()
+        if len(have) >= target:
+            return None
+        missing = [c for c in registry.categories() if c not in have]
+        if not missing:
+            return None
+        import random
+
+        cat = random.choice(missing)
+        _growing = True
+        try:
+            got = sync(cat, count=settings.footage.per_category)
+        finally:
+            _growing = False
+        log.info("autogrow: %s +%d", cat, len(got))
+        return cat if got else None
+    except Exception as exc:  # noqa: BLE001
+        _growing = False
+        log.warning("autogrow failed: %s", exc)
+        return None

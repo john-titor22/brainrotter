@@ -25,14 +25,31 @@ Run it and the Director picks a format + topic itself, the Writer scripts it, an
 a finished 1080×1920 MP4 lands in `workspace/out/` — no human steps. Operated from
 a local dashboard (queue, previews, per-video rationale).
 
+- **`movie_recap`:** a film cut into Part 1…N — a muted 9:16 montage of each
+  chunk's shots + a brainrot narrator recapping it, dialogue transcribed locally
+  with `faster-whisper`. It has its **own dashboard tab** ("Movie Recap"): drop a
+  movie file on it (or point it at a path already on disk), then click *Cut into
+  recap*. Or `brainrotter run -f movie_recap -t "<name>" --series` /
+  `brainrotter movie list`. Config: `[movie]`.
 - **Formats:** `reddit_story` (AITA/revenge readalong), `ai_brainrot` (absurd
   invented creature lore), `anime_figure` (a real public figure recast as an
   anime protagonist — a lip-synced talking head of them narrates it, stacked on
   gameplay), `object_story` (an everyday object — a car, a banana, a vending
-  machine — narrates its own life, first person). The Director chooses per
-  video; new formats are one file.
-- **Writer:** local LLM via Ollama (`llama3.1:8b`; `aya-expanse:8b` for
-  non-English). No key, no egress.
+  machine — narrates its own life, first person), `compilation` (a supercut of
+  short **sourced** clips on a theme — funny, animals, satisfying, wholesome,
+  fails, amazing — 2-5s slices hard-cut together with the clips' own audio + a
+  quiet music bed; no narration, no captions). The Director chooses per video;
+  new formats are one file.
+- **`compilation` clip sourcing:** best with a free **Reddit API** app — put
+  `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` in `.env`
+  (reddit.com/prefs/apps → create app → "script"). Without it, it falls back to
+  Reddit's rate-limited RSS feeds + YouTube search (still works, less variety).
+  `brainrotter compilation themes` / `compilation sync <theme>`. Config:
+  `[compilation]`.
+- **Writer:** `writer.provider` — `ollama` (local `llama3.1:8b`, no key, the
+  default), `groq` (Groq free tier, Qwen3 27B — much stronger, fast, frees
+  the GPU; needs a free `GROQ_API_KEY` from https://console.groq.com/keys), or
+  `anthropic` (Claude, paid). Whichever is unavailable → offline heuristics.
 - **Languages:** the Director picks one per video from `[language]` weights —
   English, French, Arabic (MSA), and **Moroccan Darija** (`ary`, Arabic script,
   spoken by the Moroccan neural voice). Arabic/Darija captions are reshaped +
@@ -84,8 +101,10 @@ step), and open the app:
 Double-click the **Brainrotter** shortcut, or `brainrotter app`. Close the window
 and the server stops; open it again to start back up.
 
-CLI, if you prefer: `brainrotter run` (Director decides) or
-`brainrotter run -f anime_figure -t "Gordon Ramsay" -n 3`.
+CLI, if you prefer: `brainrotter run` (Director decides),
+`brainrotter run -f anime_figure -t "Gordon Ramsay" -n 3`, or
+`brainrotter run --series --parts 9 -t "a lighthouse keeper who stops sleeping"`
+for a multi-part story.
 
 > **Footage.** `footage sync` uses `yt-dlp` against YouTube uploads that creators
 > publish as "no copyright / free to use" for edits. Downloading from YouTube is
@@ -121,6 +140,12 @@ obby, CS surf, satisfying, …), weighted *away* from what the last few videos
 used, and the engine hard-cuts between them mid-video. Widen the pool by editing
 `brainrotter/footage/registry.py` + each format's `BG_CATEGORIES`.
 
+**Where topics come from.** No API keys: the Director pulls a rotating pool from
+**Reddit's public RSS** (real AITA/revenge stories), **Google Trends**, and
+**Wikipedia's most-read**, mixed with the curated `topic_bank`. A raw trend
+("quantum computing", "Taylor Swift") gets reshaped by the LLM into a premise
+that fits the chosen format. `[trends] use_web`, `geo`.
+
 `brainrotter formats` shows per-format performance; `brainrotter trends` shows
 what the Director currently sees.
 
@@ -140,17 +165,58 @@ and Algerian (`ar-DZ`) neural voices read the LLM's Darija text, and a second
 non-English — `llama3.1` is weak outside English. Arabic/Darija captions are
 letter-joined + bidi'd and rendered in the bundled `NotoNaskhArabic-Bold.ttf`.
 
-**Voice & music per video.** The Director picks a specific catalog voice and a
-specific music track for every video (see `brainrotter/engine/voices.py`),
-matched to format + language + mood and weighted away from the last few videos'
-choices. Music is mood-tagged and self-sourced like footage:
-`brainrotter music sync` (or it fetches a mood on first use), `brainrotter music
-list`, or drop MP3s into `assets/music/<mood>/`.
+**Voice & music per video.**
+- **Voices** — deliberately just four: English (Andrew / Ava) and Moroccan
+  Darija (Jamal / Mouna), one male + one female each. Darija scripts are written
+  by the LLM in Arabic script and captioned in the bundled Arabic font. Set the
+  mix in `[language] weights` (English-only by default).
+- **Music** — the Director picks a mood *and* writes a specific per-video brief
+  ("dark drift phonk, aggressive" / "warped music box, uneasy"), and Brainrotter
+  fetches a track for exactly that with `yt-dlp`, on top of a 12-mood pool. So
+  every video gets a fitting, different sound. `brainrotter music sync` /
+  `music list`, or drop MP3s in `assets/music/<mood>/`.
 
 **Pin the language / voice for a specific video.** The dashboard's *New job*
 form has Language and Voice dropdowns (both default to "Director decides"). From
-the CLI: `brainrotter run -l ary --voice ar-DZ-IsmaelNeural`. `brainrotter
+the CLI: `brainrotter run -l ary --voice ar-MA-MounaNeural`. `brainrotter
 voices` lists the catalog.
+
+**Per-format visuals.** Each format declares how it looks:
+- `object_story` / `ai_brainrot` → **AI stills of the subject itself** (the
+  object / the creature), one per beat — series or not — when image generation
+  is installed; gameplay otherwise.
+- `reddit_story` / `anime_figure` → **one continuous gameplay clip**, cropped to
+  9:16, played straight for the whole video (no mid-video cuts, no switching
+  games; clips are ~2 min so a short video usually never even loops).
+
+Override per job with the dashboard *Visuals* dropdown or `brainrotter run
+--visuals footage|generated`.
+
+- **Generated stills** need `brainrotter visual-setup` — a local Stable
+  Diffusion (SDXL-Turbo via `diffusers`, isolated venv, ~7 GB one-time). Then
+  the video is a **storyboard**: the LLM writes one image prompt per beat from
+  that beat's narration (anchored to a fixed look for the subject, and to its
+  kind — `object_story` shows the object, never a person), the still is held on
+  screen for the length of that beat, gently Ken-Burns-zoomed, cut in order.
+  Until setup runs it falls back to footage and the rationale says so. Config
+  `[visuals]` (`max_images`, `steps`, `min_seconds_per_image`, …).
+- **Footage variety.** The picker now rotates clips at the file level (weighted
+  away from the last few videos' backgrounds) and the Director only picks game
+  categories it actually has cached — so the feed stops repeating the same clip.
+  After each footage video, one more category downloads in the background until
+  `[footage] auto_grow_to` are cached. Seed it faster with `brainrotter footage
+  sync`.
+
+**Related story (multi-part series).** Tick *Related story* on the *New job* form
+(or `brainrotter run --series --parts 9`) and the Director plans one story as an
+arc of up to 9 parts, then produces **Part 1…N** as sequential videos — same
+narrator, same music, continuity carried between parts, each ending on a
+cliffhanger except the finale, which wraps the story up. For series only, the
+background is **Creative-Commons b-roll** matched to each part's scene (not
+gameplay); a part that finds nothing CC falls back to gameplay so it still
+renders. `brainrotter series list` / `series show <id>` inspect the arc; the
+dashboard has a **Series** panel with per-series progress. Config: `[series]`
+(`max_parts`, `require_cc`, …).
 
 **One video at a time.** The dashboard worker renders jobs strictly
 sequentially — the next starts only when the current one finishes. Queue as many

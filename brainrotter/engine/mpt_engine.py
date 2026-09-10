@@ -102,7 +102,7 @@ def render_plan(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None) -
     task_dir.mkdir(parents=True, exist_ok=True)
 
     voice_preview = None
-    concat_mode = "random"
+    concat_mode = getattr(plan, "concat_mode", None) or "random"
     clip_duration = max(2, plan.clip_duration)
 
     material_names = []
@@ -118,6 +118,21 @@ def render_plan(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None) -
             # SadTalker failed / timed out — don't sink the whole job, fall back
             # to plain gameplay footage.
             print(f"[mpt_engine] talking head failed ({exc}); using gameplay only")
+            voice_preview = None
+            material_names = _stage_materials(plan.background_clips)
+
+    if (not material_names and plan.visual_treatment == "generated"
+            and plan.background_source == "local" and plan.background_clips):
+        # object_story / ai_brainrot: one AI still per beat, each held for the
+        # length of that beat's narration, gently Ken-Burns'd, cut in order.
+        try:
+            material_names, voice_preview = _storyboard_material(
+                plan, settings, task_dir, mpt_voice
+            )
+            concat_mode = "sequential"
+            clip_duration = 999
+        except Exception as exc:
+            print(f"[mpt_engine] storyboard failed ({exc}); using stills as plain cuts")
             voice_preview = None
             material_names = _stage_materials(plan.background_clips)
 
@@ -222,6 +237,106 @@ def _talking_head_material(plan: RenderPlan, settings, task_dir: Path, mpt_voice
         "sub_maker": sub_maker,
     }
     return _stage_materials([str(split)]), voice_preview
+
+
+def _storyboard_material(plan: RenderPlan, settings, task_dir: Path, mpt_voice):
+    """One AI still per beat, each held for that beat's spoken length, gently
+    Ken-Burns'd, cut in order — assembled here into a single silent MP4 that
+    MPT then burns captions over (our pre-made TTS is handed back via
+    voice_preview, same trick as the talking head)."""
+    audio = task_dir / "audio.mp3"
+    sub_maker = mpt_voice.tts(
+        text=plan.script_text.strip(),
+        voice_name=mpt_voice.parse_voice_name(plan.voice_name),
+        voice_rate=plan.voice_rate,
+        voice_file=str(audio),
+    )
+    if sub_maker is None or not audio.is_file():
+        raise EngineError("TTS failed while preparing the storyboard")
+    duration = float(mpt_voice.get_audio_duration(str(audio)))
+
+    images = [p for p in plan.background_clips if Path(p).is_file()]
+    if len(images) < 1:
+        raise EngineError("no usable storyboard images")
+    weights = list(plan.visual_beat_weights or [])
+    if len(weights) != len(images) or sum(weights) <= 0:
+        weights = [1.0] * len(images)
+
+    board = _ken_burns(images, weights, duration, task_dir / "storyboard.mp4", settings)
+
+    voice_preview = {
+        "script": plan.script_text.strip(),
+        "voice_name": plan.voice_name,
+        "voice_rate": plan.voice_rate,
+        "voice_volume": 1.0,
+        "audio_file": str(audio),
+        "duration": duration,
+        "sub_maker": sub_maker,
+    }
+    return _stage_materials([str(board)]), voice_preview
+
+
+def _ken_burns(images: list[str], weights: list[float], duration: float,
+               out: Path, settings) -> Path:
+    """Each image -> a segment of ``duration * weight/sum`` seconds with a slow
+    zoom (direction alternating), all identical encode params so the concat
+    demuxer just works. Total runs a hair long; MPT trims to the audio."""
+    ff = shutil.which(settings.ffmpeg_bin) or "ffmpeg"
+    w, h = settings.video.width, settings.video.height
+    fps = settings.video.fps
+    floor = float(getattr(settings.visuals, "min_seconds_per_image", 1.8))
+    total = float(sum(weights)) or float(len(images))
+    tmp = out.parent / "_kb"
+    if tmp.exists():
+        shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    segs: list[Path] = []
+    for i, (img, wt) in enumerate(zip(images, weights)):
+        seg = max(floor, duration * (wt / total))
+        # cover the 9:16 frame, then a gentle push in (even) or pull out (odd)
+        if i % 2 == 0:
+            zoom = f"1+0.10*t/{seg:.3f}"          # 1.00 -> 1.10
+        else:
+            zoom = f"1.10-0.10*t/{seg:.3f}"        # 1.10 -> 1.00
+        vf = (
+            f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+            f"scale='trunc(iw*({zoom})/2)*2':-2:eval=frame,crop={w}:{h},"
+            f"setsar=1,fps={fps},format=yuv420p"
+        )
+        seg_out = tmp / f"s{i:02d}.mp4"
+        cmd = [
+            ff, "-y", "-loop", "1", "-framerate", str(fps),
+            "-t", f"{seg:.3f}", "-i", str(Path(img).resolve()),
+            "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an", str(seg_out),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=180)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            tail = (getattr(exc, "stderr", "") or "")[-300:]
+            raise EngineError(f"ken burns segment {i} failed: {tail}") from exc
+        if not seg_out.is_file() or seg_out.stat().st_size < 5_000:
+            raise EngineError(f"ken burns segment {i} produced nothing")
+        segs.append(seg_out)
+
+    listf = tmp / "list.txt"
+    listf.write_text("".join(f"file '{s.resolve().as_posix()}'\n" for s in segs), encoding="utf-8")
+    pad = f"{duration + 0.4:.3f}"
+    cmd = [
+        ff, "-y", "-f", "concat", "-safe", "0", "-i", str(listf), "-t", pad,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(out),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=300)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        tail = (getattr(exc, "stderr", "") or "")[-300:]
+        raise EngineError(f"ken burns concat failed: {tail}") from exc
+    shutil.rmtree(tmp, ignore_errors=True)
+    if not out.is_file() or out.stat().st_size < 10_000:
+        raise EngineError("ken burns produced no output")
+    return out
 
 
 def _compose_split(head: Path, gameplay: list[str], duration: float,

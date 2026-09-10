@@ -29,6 +29,19 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS series (
+    id            TEXT PRIMARY KEY,
+    topic         TEXT,
+    format_id     TEXT,
+    language      TEXT,
+    n_parts       INTEGER NOT NULL,
+    state         TEXT NOT NULL DEFAULT 'active',   -- active | done | aborted
+    plan_json     TEXT,
+    state_json    TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS videos (
     id            TEXT PRIMARY KEY,
     job_id        TEXT NOT NULL,
@@ -94,8 +107,22 @@ def init_db() -> None:
         conn.executescript(_SCHEMA)
         # migrations for existing DBs
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
-        if "overrides_json" not in cols:
-            conn.execute("ALTER TABLE jobs ADD COLUMN overrides_json TEXT")
+        for name, ddl in (
+            ("overrides_json", "overrides_json TEXT"),
+            ("series_id", "series_id TEXT"),
+            ("part", "part INTEGER"),
+            ("seq", "seq INTEGER DEFAULT 0"),
+        ):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {ddl}")
+        vcols = {r["name"] for r in conn.execute("PRAGMA table_info(videos)")}
+        for name, ddl in (
+            ("platform_urls", "platform_urls TEXT"),
+            ("publish_error", "publish_error TEXT"),
+            ("local_deleted", "local_deleted INTEGER DEFAULT 0"),
+        ):
+            if name not in vcols:
+                conn.execute(f"ALTER TABLE videos ADD COLUMN {ddl}")
 
 
 # --- meta (small key/value store: paused flag, etc.) ------------------------
@@ -128,15 +155,17 @@ def set_paused(paused: bool) -> None:
 # --- jobs ---------------------------------------------------------------------
 
 def create_job(*, format_id: str | None = None, topic: str | None = None,
-               overrides: dict | None = None) -> str:
+               overrides: dict | None = None, series_id: str | None = None,
+               part: int | None = None, seq: int = 0) -> str:
     job_id = uuid.uuid4().hex[:12]
     now = _utcnow()
     ov = json.dumps({k: v for k, v in (overrides or {}).items() if v}) if overrides else None
     with connect() as conn:
         conn.execute(
-            "INSERT INTO jobs (id, state, format_id, topic, overrides_json, created_at, updated_at) "
-            "VALUES (?, 'queued', ?, ?, ?, ?, ?)",
-            (job_id, format_id, topic, ov, now, now),
+            "INSERT INTO jobs (id, state, format_id, topic, overrides_json, "
+            "series_id, part, seq, created_at, updated_at) "
+            "VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (job_id, format_id, topic, ov, series_id, part, seq, now, now),
         )
     return job_id
 
@@ -175,14 +204,6 @@ def list_jobs(limit: int = 50) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def next_queued_job() -> dict | None:
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM jobs WHERE state = 'queued' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-    return dict(row) if row else None
-
-
 def claim_next_job() -> dict | None:
     """Atomically start the oldest queued job — but ONLY if nothing else is in
     flight and the queue isn't paused. Returns the claimed job, or None."""
@@ -196,7 +217,8 @@ def claim_next_job() -> dict | None:
         if busy or is_paused():
             return None
         row = conn.execute(
-            "SELECT * FROM jobs WHERE state = 'queued' ORDER BY created_at ASC LIMIT 1"
+            "SELECT * FROM jobs WHERE state = 'queued' "
+            "ORDER BY created_at ASC, seq ASC LIMIT 1"
         ).fetchone()
         if not row:
             return None
@@ -290,6 +312,108 @@ def queue_summary() -> dict:
     }
 
 
+# --- series (multi-part "related story") ------------------------------------
+
+def create_series(*, topic: str, format_id: str, language: str, n_parts: int,
+                  plan: dict) -> str:
+    sid = uuid.uuid4().hex[:12]
+    now = _utcnow()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO series (id, topic, format_id, language, n_parts, state, "
+            "plan_json, state_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'active', ?, '{}', ?, ?)",
+            (sid, topic, format_id, language, n_parts,
+             json.dumps(plan, default=str), now, now),
+        )
+    return sid
+
+
+def get_series(series_id: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM series WHERE id = ?", (series_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def series_plan(series_id: str) -> dict:
+    s = get_series(series_id) or {}
+    try:
+        return json.loads(s.get("plan_json") or "{}")
+    except Exception:
+        return {}
+
+
+def series_state(series_id: str) -> dict:
+    s = get_series(series_id) or {}
+    try:
+        return json.loads(s.get("state_json") or "{}")
+    except Exception:
+        return {}
+
+
+def update_series(series_id: str, **fields: Any) -> None:
+    if not fields:
+        return
+    fields["updated_at"] = _utcnow()
+    cols = ", ".join(f"{k} = ?" for k in fields)
+    with connect() as conn:
+        conn.execute(f"UPDATE series SET {cols} WHERE id = ?", (*fields.values(), series_id))
+
+
+def merge_series_state(series_id: str, patch: dict) -> None:
+    """Shallow-merge ``patch`` into the series' state_json (recaps, resolved music…)."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT state_json FROM series WHERE id = ?", (series_id,)).fetchone()
+        try:
+            state = json.loads(row["state_json"] or "{}") if row else {}
+        except Exception:
+            state = {}
+        for k, v in patch.items():
+            if isinstance(v, dict) and isinstance(state.get(k), dict):
+                state[k].update(v)
+            else:
+                state[k] = v
+        conn.execute(
+            "UPDATE series SET state_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(state, default=str), _utcnow(), series_id),
+        )
+
+
+def series_jobs(series_id: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE series_id = ? ORDER BY part ASC, seq ASC", (series_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def cancel_series_remainder(series_id: str) -> int:
+    """Cancel still-queued parts of a series (called when a part fails)."""
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET state = 'canceled', updated_at = ? "
+            "WHERE series_id = ? AND state = 'queued'",
+            (_utcnow(), series_id),
+        )
+        return cur.rowcount
+
+
+def list_series(limit: int = 20) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM series ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        jobs = series_jobs(d["id"])
+        d["parts_done"] = sum(1 for j in jobs if j["state"] == "done")
+        d["parts_failed"] = sum(1 for j in jobs if j["state"] in ("failed", "canceled"))
+        out.append(d)
+    return out
+
+
 # --- videos ------------------------------------------------------------------
 
 def record_video(*, job_id: str, format_id: str, topic: str, path: str, duration: float) -> str:
@@ -306,6 +430,35 @@ def record_video(*, job_id: str, format_id: str, topic: str, path: str, duration
             (format_id, _utcnow()),
         )
     return vid
+
+
+def get_video(video_id: str) -> dict | None:
+    with connect() as conn:
+        r = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def get_video_by_job(job_id: str) -> dict | None:
+    with connect() as conn:
+        r = conn.execute(
+            "SELECT * FROM videos WHERE job_id = ? ORDER BY created_at DESC LIMIT 1",
+            (job_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def mark_published(video_id: str, *, platforms: list[str] | None = None,
+                   urls: dict | None = None, error: str | None = None,
+                   local_deleted: bool = False) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE videos SET published_at = COALESCE(published_at, ?), "
+            "platforms = ?, platform_urls = ?, publish_error = ?, local_deleted = ? "
+            "WHERE id = ?",
+            (_utcnow() if not error else None,
+             ",".join(platforms) if platforms else None,
+             json.dumps(urls) if urls else None,
+             error, 1 if local_deleted else 0, video_id),
+        )
 
 
 def format_stats() -> dict[str, dict]:
@@ -363,6 +516,17 @@ def recent_music(limit: int = 8) -> list[str]:
 
 def recent_music_moods(limit: int = 5) -> list[str]:
     return _recent_style_field("music_mood", limit)
+
+
+def recent_background_clips(limit: int = 12) -> list[str]:
+    """Basenames of background clips used by the most recent videos, so the
+    picker can rotate them even when few categories are cached."""
+    out: list[str] = []
+    for brief in _recent_briefs(max(4, limit // 2)):
+        for name in (brief.get("style", {}) or {}).get("background_clips", []) or []:
+            if name:
+                out.append(str(name))
+    return out[:limit]
 
 
 def recent_languages(limit: int = 6) -> list[str]:

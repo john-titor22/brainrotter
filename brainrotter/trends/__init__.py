@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+import random
+
 from ..models import TrendSignal
-from . import reddit, topic_bank
+from . import reddit, topic_bank, web
 
 
-def gather(*, limit: int = 20, seed: int | None = None) -> list[TrendSignal]:
-    """All available signals, live sources first, topic bank as filler."""
+def gather(*, limit: int = 24, seed: int | None = None) -> list[TrendSignal]:
+    """Live sources first (real stories + what's trending on the open web), then
+    the curated topic bank as filler."""
     out: list[TrendSignal] = []
-    out.extend(reddit.signals())
+    try:
+        out.extend(reddit.signals())
+    except Exception:
+        pass
+    try:
+        out.extend(web.signals())
+    except Exception:
+        pass
+    # shuffle the web trends so the Director doesn't always take #1
+    rng = random.Random(seed)
+    rng.shuffle(out)
     remaining = max(4, limit - len(out))
     out.extend(topic_bank.signals(limit=remaining, seed=seed))
-    return out
+    return out[:limit]
 
 
-__all__ = ["gather", "reddit", "topic_bank", "TrendSignal"]
+__all__ = ["gather", "reddit", "web", "topic_bank", "TrendSignal"]

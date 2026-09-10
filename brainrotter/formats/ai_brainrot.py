@@ -2,8 +2,8 @@
 
 Think "Italian brainrot" (Tralalero Tralala, Bombardiro Crocodilo) — a straight-
 faced narrator describing a ridiculous creature/universe as if it were a nature
-documentary or a lore explainer. Visuals are AI-image driven later; for now it
-runs over abstract / satisfying background footage.
+documentary or a lore explainer. Runs over gameplay footage by default; if the
+Director is told to use "generated" visuals it storyboards AI stills instead.
 """
 
 from __future__ import annotations
@@ -16,6 +16,10 @@ NAME = "AI Brainrot Lore"
 DESCRIPTION = "Deadpan narrator explains an absurd invented creature / universe."
 SIGNAL_KINDS = ["topic", "meme", "audio"]
 BG_CATEGORIES = ["satisfying", "subway", "cluster_rush", "geometry_dash", "surf", "trackmania", "cooking"]
+# The invented creature IS the video: generated stills of it (one per beat) when
+# image generation is installed, gameplay footage otherwise.
+DEFAULT_VISUAL_TREATMENT = "generated"
+SUBJECT_KIND = "creature"
 
 
 def writer_system_prompt() -> str:
@@ -62,7 +66,7 @@ def parse_script(raw: dict) -> Script:
 
 
 VOICE_TAGS = ("documentary", "narrator", "ai_brainrot")
-MUSIC_MOODS = ("eerie", "epic", "tense")
+MUSIC_MOODS = ("eerie", "epic", "tense", "dramatic", "quirky", "phonk")
 
 
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:

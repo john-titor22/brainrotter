@@ -7,8 +7,8 @@ final-form transformation, and a season-2 cliffhanger.
 
 It's parody. The writer prompt keeps it to the person's *public persona* and
 absurd invention — no fabricated real scandals stated as fact, nothing sexual,
-no slurs. Visuals are AI-anime-image driven later; for now it runs over
-high-energy background footage with big word-pop captions.
+no slurs. The figure's lip-synced talking head (SadTalker, when installed) sits
+over high-energy footage; big word-pop captions.
 """
 
 from __future__ import annotations
@@ -25,6 +25,10 @@ SIGNAL_KINDS = ["figure", "topic", "meme"]
 # installed it falls back to downloaded footage of the figure, then gameplay.
 USES_FIGURE_FOOTAGE = True
 BG_CATEGORIES = ["subway", "parkour", "surf", "geometry_dash", "satisfying", "trackmania"]
+# The figure's lip-synced talking head (SadTalker) or footage of them sits on
+# top; the format resolves that itself in orchestrator.produce.
+DEFAULT_VISUAL_TREATMENT = "footage"
+SUBJECT_KIND = "person"   # if 'generated' is forced, prompts show the figure
 
 
 def writer_system_prompt() -> str:
@@ -81,7 +85,7 @@ def parse_script(raw: dict) -> Script:
 
 
 VOICE_TAGS = ("hype", "narrator")
-MUSIC_MOODS = ("epic", "hype", "tense")
+MUSIC_MOODS = ("epic", "hype", "tense", "phonk", "dramatic", "nostalgic")
 
 
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:

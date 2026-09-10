@@ -17,88 +17,42 @@ from pydantic import BaseModel
 
 # language code -> edge-tts locale prefix. "ary" (Moroccan Darija) is written by
 # the LLM in Arabic script and spoken by the Moroccan (ar-MA) neural voices.
-LOCALE = {"en": "en-US", "fr": "fr-FR", "ar": "ar-EG", "ary": "ar-MA"}
-RTL_LANGS = {"ar", "ary"}
+# Deliberately small: English + Darija, one male + one female each. edge-tts has
+# hundreds of voices; these are the two per language that actually carry
+# short-form narration.
+LOCALE = {"en": "en-US", "ary": "ar-MA"}
+RTL_LANGS = {"ary"}
 
 
 class Voice(BaseModel):
     name: str            # edge-tts short name
     label: str
     gender: str
-    language: str        # en | fr | ar | ary
+    language: str        # en | ary  (Moroccan Darija)
     tags: list[str]      # Director hints: "narrator", "hype", "calm", "storytime", "reddit"…
     default_rate: float = 1.15
 
 
 CATALOG: list[Voice] = [
-    # --- English -----------------------------------------------------------
+    # --- English (the two most-used short-form narrator voices) -----------
     Voice(name="en-US-AndrewNeural", label="Andrew - warm, conversational",
           gender="male", language="en",
-          tags=["storytime", "narrator", "reddit"], default_rate=1.15),
-    Voice(name="en-US-BrianNeural", label="Brian - casual, youthful",
-          gender="male", language="en",
-          tags=["storytime", "reddit", "hype"], default_rate=1.18),
-    Voice(name="en-US-GuyNeural", label="Guy - classic newsreader",
-          gender="male", language="en",
-          tags=["narrator", "documentary", "ai_brainrot"], default_rate=1.1),
-    Voice(name="en-US-ChristopherNeural", label="Christopher - deep, authoritative",
-          gender="male", language="en",
-          tags=["narrator", "documentary", "hype"], default_rate=1.08),
-    Voice(name="en-US-EmmaNeural", label="Emma - bright, expressive",
-          gender="female", language="en",
-          tags=["storytime", "reddit", "hype"], default_rate=1.18),
+          tags=["storytime", "narrator", "reddit", "documentary", "ai_brainrot",
+                "object_story", "hype"], default_rate=1.15),
     Voice(name="en-US-AvaNeural", label="Ava - friendly, natural",
           gender="female", language="en",
-          tags=["storytime", "reddit", "calm"], default_rate=1.15),
-    Voice(name="en-US-AnaNeural", label="Ana - young, high-energy",
-          gender="female", language="en",
-          tags=["hype", "kids", "chaotic"], default_rate=1.22),
+          tags=["storytime", "reddit", "calm", "narrator", "object_story",
+                "hype"], default_rate=1.15),
 
-    # --- French ----------------------------------------------------------
-    Voice(name="fr-FR-HenriNeural", label="Henri - posé, narrateur",
-          gender="male", language="fr",
-          tags=["narrator", "documentary", "storytime"], default_rate=1.12),
-    Voice(name="fr-FR-DeniseNeural", label="Denise - naturelle, vive",
-          gender="female", language="fr",
-          tags=["storytime", "reddit", "hype"], default_rate=1.15),
-    Voice(name="fr-FR-EloiseNeural", label="Eloise - jeune, énergique",
-          gender="female", language="fr",
-          tags=["hype", "chaotic", "kids"], default_rate=1.2),
-    Voice(name="fr-FR-RemyMultilingualNeural", label="Remy - chaud, expressif",
-          gender="male", language="fr",
-          tags=["hype", "reddit", "storytime", "ai_brainrot"], default_rate=1.15),
-
-    # --- Arabic (MSA - rendered by lively Egyptian voices) --------------
-    Voice(name="ar-EG-ShakirNeural", label="Shakir - راوي حيوي",
-          gender="male", language="ar",
-          tags=["narrator", "hype", "reddit", "ai_brainrot"], default_rate=1.1),
-    Voice(name="ar-EG-SalmaNeural", label="Salma - واضحة، مؤثرة",
-          gender="female", language="ar",
-          tags=["storytime", "reddit", "hype"], default_rate=1.12),
-    Voice(name="ar-SA-HamedNeural", label="Hamed - عميق، جدّي",
-          gender="male", language="ar",
-          tags=["narrator", "documentary", "calm"], default_rate=1.05),
-    Voice(name="ar-SA-ZariyahNeural", label="Zariyah - هادئة، رصينة",
-          gender="female", language="ar",
-          tags=["documentary", "calm", "storytime"], default_rate=1.08),
-
-    # --- Darija (Maghrebi voices reading Moroccan Darija text) --------
-    # Microsoft's ar-MA voices lean MSA in prosody; the ar-DZ (Algerian) ones
-    # often sound more colloquially Maghrebi on Darija text. Both are offered.
+    # --- Darija (Moroccan voices reading LLM-written Darija) --------------
     Voice(name="ar-MA-JamalNeural", label="Jamal - مغربي، راجل",
           gender="male", language="ary",
-          tags=["narrator", "hype", "reddit", "ai_brainrot", "storytime"],
-          default_rate=1.05),
+          tags=["narrator", "hype", "reddit", "ai_brainrot", "storytime",
+                "object_story", "documentary"], default_rate=1.05),
     Voice(name="ar-MA-MounaNeural", label="Mouna - مغربية، مرا",
           gender="female", language="ary",
-          tags=["storytime", "reddit", "hype", "calm"], default_rate=1.06),
-    Voice(name="ar-DZ-IsmaelNeural", label="Ismael - مغاربي، راجل (أقرب للدارجة)",
-          gender="male", language="ary",
-          tags=["narrator", "hype", "reddit", "storytime", "ai_brainrot"],
-          default_rate=1.05),
-    Voice(name="ar-DZ-AminaNeural", label="Amina - مغاربية، مرا (أقرب للدارجة)",
-          gender="female", language="ary",
-          tags=["storytime", "reddit", "hype", "calm"], default_rate=1.06),
+          tags=["storytime", "reddit", "hype", "calm", "narrator",
+                "object_story"], default_rate=1.06),
 ]
 
 _BY_NAME = {v.name: v for v in CATALOG}

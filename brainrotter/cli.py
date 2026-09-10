@@ -31,9 +31,12 @@ def run(
     format: str = typer.Option(None, "--format", "-f", help="Force a format id."),
     topic: str = typer.Option(None, "--topic", "-t", help="Force a topic."),
     language: str = typer.Option(None, "--language", "-l",
-                                 help="Force a language: en | fr | ar | ary (Darija)."),
+                                 help="Force a language: en | ary (Moroccan Darija)."),
     voice: str = typer.Option(None, "--voice", help="Force an edge-tts voice (see `brainrotter voices`)."),
+    visuals: str = typer.Option(None, "--visuals", help="Force visual treatment: footage | generated."),
     count: int = typer.Option(1, "--count", "-n", help="How many videos."),
+    series: bool = typer.Option(False, "--series", help="Related story: produce Part 1..N of one arc."),
+    parts: int = typer.Option(None, "--parts", help="Target parts for --series (capped at series.max_parts)."),
     seed: int = typer.Option(None, help="Deterministic seed."),
     publish: str = typer.Option(None, help="Comma-separated platforms to publish to."),
 ):
@@ -45,12 +48,28 @@ def run(
         console.print("[yellow]note:[/] a job is already rendering — this run will "
                       "queue behind it (renders are one at a time).")
     platforms = [p.strip() for p in publish.split(",")] if publish else None
+
+    if series:
+        info, results = orchestrator.run_series(
+            topic=topic, parts=parts, format_id=format, language=language,
+            voice=voice, seed=seed, publish_to=platforms,
+        )
+        console.rule(f"[bold]series: {info['title']}")
+        console.print(f"  {len(results)}/{info['n_parts']} parts produced   "
+                      f"format [cyan]{info['format_id']}[/]   voice {info['voice']}")
+        for i, res in enumerate(results, 1):
+            console.print(f"  [green]✓[/] Part {i}: {res.script.title}   "
+                          f"{res.duration:.0f}s   → {res.path}")
+        console.print(f"\n[bold]series {info['series_id']}[/] → {get_settings().out_path}")
+        return
+
     made = 0
     for i in range(count):
         console.rule(f"[bold]job {i + 1}/{count}")
         try:
             res = orchestrator.run_once(
                 format_id=format, topic=topic, language=language, voice=voice,
+                visual_treatment=visuals,
                 seed=(seed + i if seed is not None else None),
                 publish_to=platforms,
             )
@@ -145,6 +164,184 @@ def queue_clear_history(keep: int = typer.Option(3, help="Keep this many recent 
     )
 
 
+movie_app = typer.Typer(help="Movie-recap format: cut a local film into shorts.")
+app.add_typer(movie_app, name="movie")
+
+
+@movie_app.command("list")
+def movie_list():
+    """Show movie files available for `run -f movie_recap`."""
+    from .engine import movie as _m
+
+    root = get_settings().movies_path
+    files = [p for p in root.rglob("*") if p.suffix.lower() in _m.VIDEO_EXTS]
+    if not files:
+        console.print(f"[dim]no movies in {root} — drop an .mp4/.mkv there[/]")
+        return
+    t = Table("file", "length", "recap title")
+    for p in sorted(files):
+        d = _m.probe_duration(p)
+        from .formats.movie_recap import _title_from_file
+
+        t.add_row(p.name, f"{int(d // 60)}m{int(d % 60):02d}s", _title_from_file(p))
+    console.print(t)
+
+
+comp_app = typer.Typer(help="Compilation format: themed supercuts of sourced clips.")
+app.add_typer(comp_app, name="compilation")
+
+
+@comp_app.command("themes")
+def compilation_themes():
+    """List compilation themes and their cached clip pools."""
+    from .compilation import sources as csrc
+    from .compilation.themes import THEMES
+
+    t = Table("theme", "topic", "cached", "fresh", "subreddits")
+    for k, th in THEMES.items():
+        clips = csrc.cached_clips(k)
+        used = csrc.load_used(k)
+        fresh = sum(1 for p in clips if used.get(p.stem, 0) == 0)
+        t.add_row(k, th.label, str(len(clips)), str(fresh),
+                  ", ".join("r/" + s for s in th.subreddits[:3]) + "…")
+    console.print(t)
+    src = "Reddit API" if csrc.reddit_api_available() else "Reddit RSS + YouTube search"
+    console.print(f"[dim]sourcing via {src}[/]")
+
+
+@comp_app.command("sync")
+def compilation_sync(
+    theme: str = typer.Argument(..., help="theme key (see `compilation themes`)"),
+    n: int = typer.Option(10, "-n", help="how many new clips to fetch"),
+):
+    """Pre-download source clips for a theme."""
+    from .compilation import sources as csrc
+    from .compilation.themes import THEMES
+
+    if theme not in THEMES:
+        console.print(f"[red]unknown theme '{theme}'[/] — one of: {', '.join(THEMES)}")
+        raise typer.Exit(1)
+    console.print(f"sourcing up to {n} clips for [cyan]{theme}[/]…")
+    got = csrc.harvest(theme, n)
+    console.print(f"[green]+{len(got)}[/] clip(s) → {csrc.theme_dir(theme)}")
+
+
+series_app = typer.Typer(help="Inspect 'related story' multi-part series.")
+app.add_typer(series_app, name="series")
+
+
+@app.command("publish-auth")
+def publish_auth_cmd(
+    provider: str = typer.Argument(..., help="youtube | meta | tiktok"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Just print the URL."),
+):
+    """One-time OAuth for a native publish provider (opens your browser)."""
+    from .publish import meta as _m
+    from .publish import tiktok as _t
+    from .publish import youtube as _y
+
+    mods = {"youtube": _y, "meta": _m, "instagram": _m, "facebook": _m, "tiktok": _t}
+    mod = mods.get(provider)
+    if not mod:
+        console.print("[red]provider must be: youtube | meta | tiktok[/]")
+        raise typer.Exit(1)
+    if not mod.configured():
+        console.print(mod.auth(open_browser=False))     # prints the "set X in .env" hint
+        raise typer.Exit(1)
+    console.print(mod.auth(open_browser=not no_browser))
+
+
+@app.command("publish")
+def publish_cmd(
+    job_id: str = typer.Argument(None, help="Job id to publish. Omit to publish the last unpublished video."),
+    platforms: str = typer.Option(None, "-p", "--platforms",
+                                  help="Comma list: youtube,instagram,facebook,tiktok,upload_post. Default = config."),
+    all_pending: bool = typer.Option(False, "--all", help="Publish every unpublished video."),
+):
+    """Publish finished videos as Shorts and (optionally) free local space."""
+    from . import publish as pub
+
+    db.init_db()
+    if not pub.any_ready():
+        console.print("[yellow]No provider ready.[/] Run `brainrotter publish-auth youtube` "
+                      "(and/or meta, tiktok), or set UPLOAD_POST_API_KEY. Doctor shows status.")
+        raise typer.Exit(1)
+    plats = [p.strip() for p in platforms.split(",")] if platforms else None
+
+    if all_pending:
+        with db.connect() as c:
+            rows = c.execute("SELECT id FROM videos WHERE published_at IS NULL "
+                             "AND local_deleted = 0 ORDER BY created_at").fetchall()
+        console.print(f"publishing {len(rows)} video(s)…")
+        for r in rows:
+            res = pub.publish(r["id"], plats)
+            console.print(("[green]✓[/] " if res["ok"] else "[red]✗[/] ") + r["id"]
+                          + " " + (", ".join(res.get("urls", {}).values()) or res.get("error", "")))
+        return
+
+    if job_id:
+        res = pub.publish_job(job_id, plats)
+    else:
+        with db.connect() as c:
+            r = c.execute("SELECT id FROM videos WHERE published_at IS NULL "
+                          "AND local_deleted = 0 ORDER BY created_at DESC LIMIT 1").fetchone()
+        if not r:
+            console.print("nothing unpublished")
+            raise typer.Exit(0)
+        res = pub.publish(r["id"], plats)
+    if res["ok"]:
+        console.print("[green]published[/] → " + (", ".join(res.get("urls", {}).values()) or "(no urls returned)"))
+        if res.get("deleted_local"):
+            console.print("  [dim]local file deleted[/]")
+    else:
+        console.print(f"[red]failed:[/] {res.get('error')}")
+        raise typer.Exit(1)
+
+
+@series_app.command("list")
+def series_list_cmd(limit: int = 20):
+    """Show planned / running / finished series."""
+    db.init_db()
+    rows = db.list_series(limit)
+    if not rows:
+        console.print("[dim]no series yet — `brainrotter run --series`[/]")
+        return
+    t = Table("id", "title", "format", "lang", "parts", "state")
+    for s in rows:
+        import json as _j
+
+        try:
+            title = _j.loads(s.get("plan_json") or "{}").get("title") or s["topic"]
+        except Exception:
+            title = s["topic"]
+        t.add_row(s["id"], (title or "")[:40], s["format_id"] or "-",
+                  s["language"] or "en",
+                  f"{s['parts_done']}/{s['n_parts']}"
+                  + (f" (+{s['parts_failed']}✗)" if s["parts_failed"] else ""),
+                  s["state"])
+    console.print(t)
+
+
+@series_app.command("show")
+def series_show_cmd(series_id: str):
+    """Show a series' arc and per-part status."""
+    db.init_db()
+    s = db.get_series(series_id)
+    if not s:
+        console.print(f"[red]no such series {series_id}[/]")
+        raise typer.Exit(1)
+    plan = db.series_plan(series_id)
+    jobs = {j["part"]: j for j in db.series_jobs(series_id)}
+    console.print(f"[bold]{plan.get('title', s['topic'])}[/]  "
+                  f"[dim]({s['state']}, {s['format_id']}, {s['language']})[/]")
+    console.print(f"[dim]{plan.get('premise', '')}[/]\n")
+    t = Table("part", "state", "goal")
+    for p in plan.get("parts", []):
+        j = jobs.get(p["n"], {})
+        t.add_row(str(p["n"]), j.get("state", "-"), (p.get("goal") or "")[:80])
+    console.print(t)
+
+
 @app.command()
 def voices():
     """List the edge-tts voices the Director / `run --voice` can pick."""
@@ -174,10 +371,9 @@ def trends(limit: int = 15):
     """Show the trend signals the Director would see right now."""
     from . import trends as tr
 
-    t = Table("source", "kind", "score", "hints", "title")
+    t = Table("source", "kind", "score", "title")
     for s in tr.gather(limit=limit):
-        t.add_row(s.source, s.kind, f"{s.score:.2f}",
-                  ",".join(s.format_hints), s.title[:70])
+        t.add_row(s.source, s.kind, f"{s.score:.2f}", s.title[:70])
     console.print(t)
 
 
@@ -199,11 +395,16 @@ def doctor():
     check("engine importable", (ENGINE_ROOT / "app" / "services" / "task.py").is_file())
     console.print(f"  [dim]Writer:[/] {llm.status()}")
     check(f"Writer ({llm.provider()}) usable", llm.available(),
-          "ollama pull llama3.1:8b  (or set writer.provider) — stub writer used otherwise")
+          "set GROQ_API_KEY in .env (provider=groq), or `ollama pull llama3.1:8b` "
+          "(provider=ollama) — stub writer used otherwise")
     langs = s.language.enabled
     if langs != ["en"]:
         console.print(f"  [dim]Languages:[/] {', '.join(langs)}   "
-                      f"[dim]non-English writer:[/] {llm.multilingual_status()}")
+                      f"[dim]Darija writer:[/] {llm.multilingual_status()}")
+        if "ary" in langs:
+            from .darija_tts import generator as _dtts
+
+            console.print(f"  [dim]Darija voice:[/] {_dtts.status()}")
     check("yt-dlp installed (footage / music)", _has("yt_dlp"), "pip install 'yt-dlp[default]'")
     if any(l in ("ar", "ary") for l in langs):
         from .formats.base import RTL_CAPTION_FONT
@@ -221,10 +422,31 @@ def doctor():
         console.print(f"  [dim]Music:[/] {n_music} track(s) across "
                       f"{len(_music.moods())} moods"
                       + ("  — `brainrotter music sync` to fill" if n_music < 3 else ""))
-    from . import avatar
+    from . import avatar, visuals
     console.print(f"  [dim]anime_figure:[/] "
                   + ("talking-head ready (SadTalker)" if avatar.is_installed()
                      else "footage mode — `brainrotter avatar-setup` for talking heads"))
+    console.print(f"  [dim]generated visuals:[/] {visuals.status()}")
+    from .engine import movie as _mv
+    n_movies = len([p for p in s.movies_path.rglob("*") if p.suffix.lower() in _mv.VIDEO_EXTS])
+    wh = "faster-whisper ready" if _has("faster_whisper") else "faster-whisper missing"
+    console.print(f"  [dim]movie_recap:[/] {n_movies} movie(s) in {s.movies_path.name}/, {wh}")
+    from .compilation import review as _crev
+    from .compilation import sources as _csrc
+    from .compilation.themes import THEMES as _CTHEMES
+
+    n_pool = sum(len(_csrc.cached_clips(k)) for k in _CTHEMES)
+    src = "Reddit API + YouTube" if _csrc.reddit_api_available() else "YouTube + keyless Reddit (.json/.rss)"
+    vm = _crev.vision_model()
+    rev = f"auto-review via {vm}" if vm else "structural review only (pull llama3.2-vision for off-theme detection)"
+    console.print(f"  [dim]compilation:[/] {len(_CTHEMES)} themes, {n_pool} clip(s) cached, "
+                  f"sourcing via {src}; {rev}")
+    from . import publish as _pub
+    console.print(f"  [dim]publish:[/] {_pub.status()}")
+    for pr in _pub.provider_status():
+        mark = "[green]✓[/]" if pr["authed"] or (pr["name"] == "upload_post" and pr["configured"]) else \
+               ("[yellow]auth[/]" if pr["configured"] else "[dim]—[/]")
+        console.print(f"    {mark} {pr['name']:<11} {pr['hint'] if mark != '[green]✓[/]' else ''}")
     cookie = Path(s.footage.cookies_file) if s.footage.cookies_file else s.root / "assets" / "cookies.txt"
     if s.footage.allow_youtube:
         check("JS runtime for YouTube (node/deno)",
@@ -346,6 +568,52 @@ def avatar_setup_cmd():
     from .avatar import setup as _a
 
     raise typer.Exit(_a.run())
+
+
+@app.command("darija-tts-setup")
+def darija_tts_setup_cmd(
+    force: bool = typer.Option(False, "--force", help="Re-download the model."),
+):
+    """Install a real Moroccan Darija voice (XTTS-v2 fine-tune). ~2 GB one-time.
+
+    Until this runs, Darija videos use edge-tts's ar-MA voice, which reads Darija
+    text but sounds MSA-accented, not Darija.
+    """
+    from .darija_tts import generator as _d
+
+    if not _d.TTS_PY.is_file():
+        console.print("[yellow]creating the isolated venv + installing coqui-tts…[/]")
+        import subprocess as _sp
+
+        _d.TTS_DIR.mkdir(parents=True, exist_ok=True)
+        for py in ("py -3.10", "py -3.11"):
+            try:
+                _sp.run([*py.split(), "-m", "venv", str(_d.TTS_DIR / ".venv")],
+                        check=True, capture_output=True)
+                break
+            except Exception:
+                continue
+        if not _d.TTS_PY.is_file():
+            console.print("[red]need Python 3.10 or 3.11 — install it (winget install Python.Python.3.10)[/]")
+            raise typer.Exit(1)
+        _sp.run([str(_d.TTS_PY), "-m", "pip", "install", "-q", "coqui-tts", "soundfile"],
+                check=False)
+    console.print(_d.run_setup(force=force))
+    raise typer.Exit(0 if _d.is_installed() else 1)
+
+
+@app.command("visual-setup")
+def visual_setup_cmd(
+    force: bool = typer.Option(False, "--force", help="Reinstall even if already set up."),
+):
+    """Install local AI image generation (Stable Diffusion). ~7 GB one-time.
+
+    Once installed, the Director can pick 'generated' visuals — a still per beat
+    of the actual subject — starting with the object_story format.
+    """
+    from .visuals import setup as _v
+
+    raise typer.Exit(_v.run(force=force))
 
 
 @app.command()

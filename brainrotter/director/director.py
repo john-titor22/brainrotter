@@ -20,7 +20,7 @@ from ..formats import registry
 from ..models import Brief, TrendSignal
 from ..writer import llm
 
-_LANG_NAME = {"en": "English", "fr": "French", "ar": "Arabic (MSA)", "ary": "Moroccan Darija"}
+_LANG_NAME = {"en": "English", "ary": "Moroccan Darija"}
 
 # Fallback voice tags / music moods per format when the format module doesn't
 # declare its own. The Director picks a specific voice + track within these.
@@ -31,11 +31,36 @@ _FORMAT_VOICE_TAGS = {
     "object_story": ("storytime", "calm", "narrator"),
 }
 _FORMAT_MUSIC_MOODS = {
-    "reddit_story": ("tense", "funny", "hype", "chill"),
-    "ai_brainrot": ("eerie", "epic", "tense"),
-    "anime_figure": ("epic", "hype", "tense"),
-    "object_story": ("chill", "funny", "tense", "eerie"),
+    "reddit_story": ("tense", "funny", "hype", "chill", "dramatic", "phonk", "sad"),
+    "ai_brainrot": ("eerie", "epic", "tense", "dramatic", "quirky", "phonk"),
+    "anime_figure": ("epic", "hype", "tense", "phonk", "dramatic", "nostalgic"),
+    "object_story": ("chill", "funny", "sad", "nostalgic", "dreamy", "quirky", "eerie"),
 }
+
+_MUSIC_BRIEF_SYS = (
+    "You pick the background music for a short vertical video. Given the format, "
+    "the topic and a rough mood, name the exact vibe in 3-7 words — genre + "
+    "feel, the kind of thing that's actually used on TikTok/Reels for this. "
+    "Examples: 'dark drift phonk, aggressive', 'warped music box, uneasy', "
+    "'warm nostalgic lofi, bittersweet', 'epic orchestral build, heroic', "
+    "'deadpan pizzicato, comedic'. Answer with ONLY that phrase."
+)
+
+
+def _music_brief(fmt_id: str, topic: str, mood: str) -> str:
+    """A specific, search-ready music vibe for this exact video."""
+    if llm.available():
+        try:
+            out = llm.complete_text(
+                _MUSIC_BRIEF_SYS,
+                f"Format: {fmt_id}\nTopic: {topic}\nMood: {mood}",
+                fast=True, max_tokens=32,
+            ).strip().strip('"\'`.').splitlines()[0].strip()
+            if 3 <= len(out) <= 80:
+                return out
+        except Exception:
+            pass
+    return f"{mood} background music"
 
 
 def decide(
@@ -45,6 +70,7 @@ def decide(
     topic: str | None = None,
     language: str | None = None,
     voice: str | None = None,
+    visual_treatment: str | None = None,
     seed: int | None = None,
 ) -> Brief:
     settings = get_settings()
@@ -53,8 +79,18 @@ def decide(
     fmt_id = format_id or _choose_format(rng)
     fmt = registry.get(fmt_id)
 
+    if fmt_id == "compilation":
+        return _compilation_brief(rng, topic, signals, seed)
+
     signal = None if topic else _pick_signal(signals, fmt, rng)
-    chosen_topic = topic or (signal.title if signal else "a story that went too far")
+    if topic:
+        chosen_topic = topic
+    elif signal and signal.kind == "trend":
+        chosen_topic = _topic_from_trend(signal, fmt_id)     # reshape a raw trend
+    elif signal:
+        chosen_topic = signal.title
+    else:
+        chosen_topic = "a story that went too far"
 
     # An explicit voice pins the language too (unless one was also given).
     if voice and not language:
@@ -68,6 +104,10 @@ def decide(
     angle, hook = _angle_and_hook(fmt_id, chosen_topic, signal, language)
 
     style = _style_knobs(fmt, rng, language, voice)
+    if visual_treatment in ("footage", "generated"):
+        style["visual_treatment"] = visual_treatment
+    if settings.music.enabled and settings.music.per_video_query:
+        style["music_query"] = _music_brief(fmt_id, chosen_topic, style.get("music_mood", ""))
 
     rationale = _rationale(fmt_id, signal, target_seconds, language, style)
 
@@ -83,6 +123,74 @@ def decide(
         style=style,
         rationale=rationale,
         source_signal=signal,
+    )
+
+
+# --- compilation ----------------------------------------------------------
+
+def _compilation_brief(rng: random.Random, topic: str | None,
+                       signals: list[TrendSignal], seed: int | None) -> Brief:
+    """The compilation format needs almost nothing the normal pipeline builds —
+    no writer, no voice, no captions, no visual treatment. Just a theme and a
+    quiet music track."""
+    from ..compilation import sources as _csrc
+    from ..compilation import themes as _cth
+
+    settings = get_settings()
+
+    if topic and topic.strip():
+        # the user asked for a specific topic — honour it exactly (built-in when
+        # it plainly matches one, otherwise an ad-hoc theme sourced for it)
+        theme = _cth.resolve(topic.strip())
+        theme_key = theme.key
+    else:
+        keys = list(_cth.THEMES)
+        recent = _csrc.recent_themes(3)
+        blob = " ".join((s.title or "") for s in signals).lower()
+        weights = []
+        for k in keys:
+            hits = sum(1 for kw in _cth.THEMES[k].keywords if kw in blob)
+            w = (1.0 + hits) * (0.15 ** recent.count(k))
+            weights.append(max(0.02, w))
+        theme_key = rng.choices(keys, weights=weights, k=1)[0]
+        theme = _cth.THEMES[theme_key]
+
+    # quiet music bed: the theme's mood, a specific track if the pool has one
+    mood = theme.music_mood
+    track = None
+    if settings.music.enabled:
+        try:
+            track = music.pick(mood, rng, exclude=tuple(db.recent_music(8)))
+            if track is None and settings.music.auto_sync:
+                music.ensure(mood, count=2)
+                track = music.pick(mood, rng)
+        except Exception:
+            track = None
+
+    target = settings.compilation.target_seconds
+    style = {
+        "compilation_theme": theme_key,
+        "music_mood": mood,
+        "music_file": track,
+        "music_volume": settings.compilation.music_volume,
+    }
+    rationale = (
+        f"format=compilation; theme={theme_key}; "
+        f"clips from r/{', r/'.join(theme.subreddits[:3])}…; "
+        f"music={mood}" + ("" if track else " (pool empty — will fetch)")
+        + f"; target {target}s"
+    )
+    return Brief(
+        format_id="compilation",
+        topic=theme.label,
+        language="en",
+        angle=f"a supercut of short {theme.label}",
+        hook="",
+        target_seconds=target,
+        tone="fast cuts, clip audio, no narration",
+        style=style,
+        rationale=rationale,
+        source_signal=None,
     )
 
 
@@ -124,6 +232,10 @@ def _score_formats() -> dict[str, float]:
     stats = db.format_stats()
     out: dict[str, float] = {}
     for fid in registry.all_ids():
+        # Formats that need an explicit topic + asset (movie_recap needs a movie
+        # file) are never picked by the autonomous Director.
+        if getattr(registry.get(fid), "REQUIRES_EXPLICIT", False):
+            continue
         base = settings.director.default_weights.get(fid, 0.3)
         s = stats.get(fid)
         # Blend prior with measured performance once a format has a track record.
@@ -137,16 +249,85 @@ def _score_formats() -> dict[str, float]:
 # --- signal selection -------------------------------------------------------
 
 def _pick_signal(signals: list[TrendSignal], fmt, rng: random.Random) -> TrendSignal | None:
+    # a raw web trend can be reshaped to fit any format, so it always matches
     matches = [
         s for s in signals
-        if fmt.ID in s.format_hints or s.kind in fmt.SIGNAL_KINDS
+        if s.kind == "trend" or fmt.ID in s.format_hints or s.kind in fmt.SIGNAL_KINDS
     ]
     if not matches:
         matches = signals
     if not matches:
         return None
-    matches.sort(key=lambda s: s.score + rng.random() * 0.15, reverse=True)
-    return matches[0]
+
+    def rank(s: TrendSignal) -> float:
+        native = 0.25 if (fmt.ID in s.format_hints or s.kind in fmt.SIGNAL_KINDS) else 0.0
+        return s.score + native + rng.random() * 0.35
+
+    matches.sort(key=rank, reverse=True)
+    top = matches[: max(3, len(matches) // 3)]
+    return rng.choice(top)
+
+
+_TREND_TOPIC_SYS = {
+    "reddit_story": (
+        "You take something in the news / trending and invent a specific "
+        "first-person Reddit-drama premise it could plausibly cause (AITA, petty "
+        "revenge, malicious compliance, confession). One sentence, concrete, a "
+        "real human conflict.\n"
+        "Trending 'airline strike' -> 'AITA for leaving my coworker stranded at "
+        "the airport after she mocked me for booking a refundable ticket?'\n"
+        "Trending 'housing prices' -> 'My landlord raised my rent 40 percent, so "
+        "I reported every code violation I'd been ignoring for three years.'"
+    ),
+    "ai_brainrot": (
+        "You turn something trending into an absurd 'Italian brainrot' "
+        "creature/artifact — a straight-faced, ominous, fake-specific monster. "
+        "One phrase.\n"
+        "Trending 'AI chatbots' -> 'a fax machine that gained sentience and now "
+        "only speaks in customer-service apologies'\n"
+        "Trending 'crypto crash' -> 'a vending machine deity that eats coins and "
+        "prophesies market doom'"
+    ),
+    "anime_figure": (
+        "If the trending item is a real, widely-known PERSON, reply with only "
+        "their exact name. Otherwise invent ONE mascot character that embodies "
+        "it (a name + 2-4 words).\n"
+        "Trending 'Elon Musk' -> 'Elon Musk'\n"
+        "Trending 'the stock market' -> 'The Bull, a suited minotaur of pure "
+        "greed'"
+    ),
+    "object_story": (
+        "You turn something trending into ONE everyday object that would narrate "
+        "its own quiet, deadpan-poignant life story shaped by it. One phrase.\n"
+        "Trending 'remote work' -> 'the office chair nobody has sat in for two "
+        "years'\n"
+        "Trending 'the lottery' -> 'the losing scratch ticket crumpled in a "
+        "gas-station bin'"
+    ),
+    "movie_recap": "",
+}
+
+
+def _topic_from_trend(signal: TrendSignal, fmt_id: str) -> str:
+    """A raw trend phrase -> a premise that actually fits the format."""
+    if not llm.available():
+        return signal.title
+    sys = _TREND_TOPIC_SYS.get(fmt_id) or _TREND_TOPIC_SYS["reddit_story"]
+    try:
+        out = llm.complete_text(
+            sys + "\nReply with ONLY the premise, one line, no quotes, no preamble.",
+            f"Trending now: {signal.title}\n{(signal.body or '')[:280]}\n\nPremise:",
+            fast=True, max_tokens=70, temperature=0.8,
+        ).strip().strip('"\'`').splitlines()[0].strip()
+        low = out.lower()
+        if 4 < len(out) < 160 and low != signal.title.lower() and " " in out:
+            return out
+    except Exception:
+        pass
+    # reshape failed — a bare trend phrase is a bad topic for a story format
+    if fmt_id in ("reddit_story", "object_story"):
+        return f"a situation that spiralled because of {signal.title}"
+    return signal.title
 
 
 # --- angle / hook ----------------------------------------------------------
@@ -238,11 +419,15 @@ def _style_knobs(fmt, rng: random.Random, language: str = "en",
         except Exception:
             track = None
 
+    treatment, visual_note = _visual_treatment(fmt)
+
     return {
         "voice": voice.name,
         "voice_rate": round(rng.uniform(*(
             (1.0, 1.12) if language in ("ar", "ary") else (1.08, 1.25)
         )), 2),
+        "visual_treatment": treatment,
+        "_visual_note": visual_note,
         "clip_duration": rng.choice([3, 4, 5]),
         "caption_position": "center",
         "font_size": rng.choice([80, 84, 88]),
@@ -255,10 +440,43 @@ def _style_knobs(fmt, rng: random.Random, language: str = "en",
     }
 
 
+def _visual_treatment(fmt) -> tuple[str, str]:
+    """Each format declares its visual identity via ``DEFAULT_VISUAL_TREATMENT``
+    ('footage' = gameplay, 'generated' = local AI stills of the subject). This is
+    deterministic per format — not a dice roll. 'generated' silently degrades to
+    'footage' until `brainrotter visual-setup` has run.
+
+    Returns (treatment, note) — note explains a downgrade, for the rationale."""
+    want = getattr(fmt, "DEFAULT_VISUAL_TREATMENT", "footage")
+    if want != "generated":
+        return "footage", ""
+    try:
+        from .. import visuals
+
+        if visuals.available():
+            return "generated", ""
+    except Exception:
+        pass
+    return "footage", "generated visuals wanted — run `brainrotter visual-setup` (using footage)"
+
+
 def _pick_backgrounds(fmt, rng: random.Random) -> list[str]:
     """Choose 1-2 background games for this video, biased away from the ones the
-    last few videos used, so the feed keeps changing."""
+    last few videos used, so the feed keeps changing.
+
+    Prefer categories that actually have footage cached — picking one that's
+    empty just makes ``assets.pick_mixed`` fall back to "any clip", which is why
+    the same background kept repeating."""
     pool = list(getattr(fmt, "BG_CATEGORIES", None) or ["subway"])
+    try:
+        from .. import assets
+
+        have = set(assets.available_categories())
+        live = [c for c in pool if c in have]
+        if live:
+            pool = live                      # only pick games we actually have footage for
+    except Exception:
+        pass
     recent = db.recent_background_categories(6)
     weights = []
     for c in pool:
@@ -291,5 +509,9 @@ def _rationale(fmt_id: str, signal: TrendSignal | None, seconds: int,
         m = style.get("music_mood")
         if m:
             bits.append(f"music={m}" + ("" if style.get("music_file") else " (random — pool empty)"))
+        if style.get("visual_treatment") == "generated":
+            bits.append("visuals=AI-generated stills of the subject")
+        elif style.get("_visual_note"):
+            bits.append(style["_visual_note"])
     bits.append(f"target {seconds}s")
     return "; ".join(bits)

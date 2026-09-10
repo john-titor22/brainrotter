@@ -3,8 +3,9 @@
 A car, a banana, a vending machine, a single sock — given a voice, a personality,
 petty grievances and small joys, telling a story about something mundane as if
 it were the most important day of its life. Deadpan-poignant, a little funny, a
-little sad. Runs over satisfying / abstract background footage with big word-pop
-captions; later the object itself can be an AI image or a lip-synced photo.
+little sad. When local image generation is installed the video is a storyboard
+of AI stills of the object (one per beat); otherwise it runs over gameplay
+footage. Big word-pop captions either way.
 """
 
 from __future__ import annotations
@@ -19,7 +20,16 @@ SIGNAL_KINDS = ["topic", "meme", "object"]
 BG_CATEGORIES = ["satisfying", "cooking", "subway", "cluster_rush", "surf", "geometry_dash", "trackmania"]
 
 VOICE_TAGS = ("storytime", "calm", "narrator", "reddit")
-MUSIC_MOODS = ("chill", "funny", "tense", "eerie")
+MUSIC_MOODS = ("chill", "funny", "sad", "nostalgic", "dreamy", "quirky", "eerie")
+
+# The object IS the video — always use generated stills of it (Ken-Burns'd in
+# beat order) when local image generation is installed. Falls back to footage
+# only when it isn't (`brainrotter visual-setup`).
+DEFAULT_VISUAL_TREATMENT = "generated"
+SUBJECT_KIND = "object"   # image prompts show the OBJECT, never a person
+# The object gets a face and lip-syncs the narration (SadTalker) when both image
+# generation and the avatar model are installed; Ken-Burns stills otherwise.
+TALKING_SUBJECT = True
 
 
 def writer_system_prompt() -> str:
@@ -48,6 +58,10 @@ def writer_user_prompt(brief: Brief) -> str:
         f"Target length: about {brief.target_seconds} seconds.",
         "Write the monologue now, as JSON. The title is what the object would "
         "call its own story. Speak entirely in first person as the object.",
+        "For each beat's \"visual\" field: describe the SHOT of the object for "
+        "that moment — where it is, the light, what's around it, its condition "
+        "(e.g. 'the lone sock wedged behind a dusty dryer, dim laundry room'). "
+        "Concrete and filmable, 6-12 words. Same object throughout.",
     ]
     return "\n".join(x for x in lines if x)
 

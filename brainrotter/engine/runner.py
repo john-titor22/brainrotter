@@ -1,15 +1,46 @@
-"""Run a render in a child process, with one retry on a hard crash."""
+"""Run a render in a child process, retrying transient MoviePy / ffmpeg deaths."""
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 from ..models import RenderPlan
-from ._subprocess import RESULT_MARKER
 from .mpt_engine import EngineError
+
+# The stdout contract with brainrotter.engine._subprocess. Defined here (not
+# imported from _subprocess) so that running `python -m brainrotter.engine.
+# _subprocess` doesn't pull _subprocess into sys.modules during package import
+# — that triggers a runpy RuntimeWarning and can double-run the module body.
+RESULT_MARKER = "@@RESULT@@"
+
+# ffmpeg / MoviePy progress spam — useless in an error tail and it hides the
+# real exception line.
+_PROGRESS = re.compile(
+    r"^\s*(frame=|size=|\[.*\]\s|video:|audio:|Lsize|Output #|Input #|Stream #|"
+    r"Press \[q\]|Side data:|CPB properties:|encoder\s|Metadata:|\s+major_brand|"
+    r"\s+minor_version|\s+compatible_brands|\s+encoder|\s+handler_name|"
+    r"\s+vendor_id|configuration:|libav|built with|ffmpeg version)"
+    r"|bitrate=\s*\S+kbits/s|speed=\s*\S+x\b"
+)
+
+# Errors that will fail again no matter how many times we retry.
+_PERMANENT = (
+    "no background clips found",
+    "failed to import vendored engine",
+    "output is missing",
+    "set background_source",
+)
+
+
+def _error_tail(proc: subprocess.CompletedProcess, keep: int = 8) -> str:
+    raw = (proc.stderr or proc.stdout or "").strip().splitlines()
+    signal = [ln for ln in raw if ln.strip() and not _PROGRESS.search(ln)]
+    lines = (signal or raw)[-keep:]
+    return " | ".join(l.strip() for l in lines)
 
 
 def render_isolated(plan: RenderPlan, *, job_id: str, out_dir: Path | None = None,
@@ -29,17 +60,9 @@ def render_isolated(plan: RenderPlan, *, job_id: str, out_dir: Path | None = Non
             if line.startswith(RESULT_MARKER):
                 return json.loads(line[len(RESULT_MARKER):].strip())
 
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
-        last = " | ".join(tail)
-        # retry on a hard crash (segfault) OR a flaky MoviePy / ffmpeg / OS error
-        flaky = any(s in last for s in (
-            "Errno 22", "MoviePy error", "FFMPEG", "ffmpeg", "Broken pipe",
-            "Invalid argument", "Auto-inserting", "bitstream filter",
-            "moov atom not found", "Invalid data found", "Conversion failed",
-            "h264_mp4toannexb",
-        ))
-        crashed = proc.returncode not in (0, 2)
-        if not crashed and not flaky:
+        last = _error_tail(proc)
+        if any(s in last for s in _PERMANENT):
             raise EngineError(last or "engine failed")
-        # else: fall through and try again
-    raise EngineError(f"engine failed after {attempts} attempts: {last}")
+        # Everything else — a clean EngineError (exit 2), a segfault, a MoviePy /
+        # ffmpeg pipe break — is usually transient on Windows. Try again.
+    raise EngineError(f"engine failed after {attempts} attempt(s): {last}")

@@ -18,17 +18,6 @@ from . import llm
 # language. Only the spoken text (narration / title / on_screen) is localised —
 # the JSON keys and any English structural rules stay as-is.
 _LANGUAGE_DIRECTIVE = {
-    "fr": (
-        "LANGUE : écris TOUT le texte parlé (narration, titre, textes à l'écran) "
-        "en FRANÇAIS naturel et oral — le registre parlé d'un créateur, pas un "
-        "français soutenu ni une traduction rigide. Garde les clés JSON en "
-        "anglais. Les hashtags peuvent rester en anglais."
-    ),
-    "ar": (
-        "اللغة: اكتب كل النص المنطوق (السرد، العنوان، النصوص على الشاشة) "
-        "بالعربية الفصحى الحديثة، بأسلوب شبابي حيوي مناسب لمقاطع السوشيال ميديا "
-        "القصيرة، وليس أسلوباً أكاديمياً جامداً. أبقِ مفاتيح JSON بالإنجليزية."
-    ),
     "ary": (
         "اللغة: كتب گاع النص المنطوق (السرد، العنوان، النصوص فالشاشة) "
         "بالدارجة المغربية بحال ما كيهضرو بيها الناس فالزنقة — ماشي بالعربية "
@@ -63,20 +52,114 @@ def _localise(system: str, brief: Brief) -> str:
 def write(brief: Brief) -> Script:
     fmt = registry.get(brief.format_id)
     if llm.available():
-        raw = llm.complete_json(
-            _localise(fmt.writer_system_prompt(), brief),
-            fmt.writer_user_prompt(brief),
-            max_tokens=4000,
-            language=brief.language,
-        )
+        system = _localise(fmt.writer_system_prompt(), brief)
+        user = fmt.writer_user_prompt(brief)
+        if brief.series:
+            system, user = _serialize(system, user, brief)
+        raw = llm.complete_json(system, user, max_tokens=4000, language=brief.language)
         script = fmt.parse_script(raw)
+        if get_settings().writer.coherence_pass:
+            _coherence_pass(script, brief)
         if brief.language == "ary" and get_settings().language.darija_polish:
             _darija_polish(script)
     else:
         script = _stub_script(brief)
+    if brief.series:
+        _apply_series(script, brief)
     _trim_to_budget(script, brief)
     script.est_seconds = round(len(script.narration_text.split()) / 2.5, 1)
     return script
+
+
+_COHERENCE_SYS = (
+    "You are a script editor for short-form video. You get a story as a numbered "
+    "list of spoken lines. Do a tight edit pass:\n"
+    "- Each line must follow logically from the one before. Fix contradictions "
+    "and non-sequiturs.\n"
+    "- The last line must pay off the first line (answer its question / land its "
+    "twist). If it doesn't, rewrite the last line so it does.\n"
+    "- Kill filler lines ('things escalated', 'I couldn't believe it') — replace "
+    "with a concrete beat or cut them.\n"
+    "- Keep the same voice, the same rough length, and the same number of lines "
+    "(±1). Don't blandify it — keep the specific weird details.\n"
+    'Return JSON: {"lines": [str, ...]} — the edited lines in order. If the '
+    "story is already tight, return the lines unchanged."
+)
+
+
+def _coherence_pass(script: Script, brief: Brief) -> None:
+    """One fast pass to make the story hang together and pace better. Best
+    effort — any failure or a bad shape leaves the original untouched."""
+    lines = [b.narration.strip() for b in script.beats if b.narration.strip()]
+    if len(lines) < 3:
+        return
+    try:
+        data = llm.complete_json(
+            _COHERENCE_SYS,
+            "Story:\n" + "\n".join(f"{i + 1}. {l}" for i, l in enumerate(lines)),
+            fast=True, max_tokens=1400, language=brief.language,
+            temperature=0.4,
+        )
+        out = data.get("lines") or []
+        out = [str(x).strip() for x in out if str(x).strip()]
+        if not (isinstance(out, list) and abs(len(out) - len(lines)) <= 1 and len(out) >= 3):
+            return
+        # rebuild beats: reuse the old beats' visual/sfx where we can
+        new_beats = []
+        for i, text in enumerate(out):
+            src = script.beats[min(i, len(script.beats) - 1)]
+            new_beats.append(ScriptBeat(
+                narration=text, on_screen=src.on_screen if i < len(script.beats) else None,
+                visual=src.visual if i < len(script.beats) else "",
+                sfx=src.sfx if i < len(script.beats) else None,
+            ))
+        script.beats = new_beats
+    except Exception:
+        return
+
+
+_SERIES_DIRECTIVE = (
+    "SERIES MODE — this script is ONE part of a multi-part story. Continuity is "
+    "the priority:\n"
+    "- Keep the EXACT same characters, names, place and tone as 'The story so far'.\n"
+    "- Do NOT re-tell earlier parts. Open with at most a one-line catch-up, then "
+    "move the story forward.\n"
+    "- Cover the events in 'This part must cover' and nothing past them.\n"
+    "- If this is NOT the final part: end on a hard cliffhanger — an unanswered "
+    "question or a reveal — that makes them need the next part.\n"
+    "- If this IS the final part: resolve every open thread and land a real "
+    "ending. No cliffhanger, no 'to be continued', no 'follow for part'.\n"
+    "- The first beat must be the given hook (tighten wording if needed)."
+)
+
+
+def _serialize(system: str, user: str, brief: Brief) -> tuple[str, str]:
+    s = brief.series
+    ctx = [
+        f"=== SERIES: \"{s.title}\" — Part {s.part} of {s.part_count} ===",
+        f"Overall premise: {s.premise}",
+    ]
+    if s.story_so_far:
+        ctx.append("The story so far:\n" + s.story_so_far)
+    else:
+        ctx.append("This is Part 1 — establish the character and the situation fast, "
+                   "then hit the first turn.")
+    ctx.append("This part must cover: " + s.part_goal)
+    ctx.append("THIS IS THE FINAL PART — end the whole story." if s.is_finale
+               else "This is NOT the final part — it must end on a cliffhanger.")
+    if brief.hook:
+        ctx.append(f"Required opening hook: {brief.hook}")
+    return system + "\n\n" + _SERIES_DIRECTIVE, "\n".join(ctx) + "\n\n" + user
+
+
+def _apply_series(script: Script, brief: Brief) -> None:
+    s = brief.series
+    script.title = f"{s.title} — Part {s.part}"
+    if s.is_finale:
+        if script.cta and "part" in script.cta.lower():
+            script.cta = None
+    else:
+        script.cta = script.cta or f"Part {s.part + 1} tomorrow."
 
 
 def _trim_to_budget(script: Script, brief: Brief) -> None:

@@ -56,8 +56,9 @@ def _probe_duration(path: Path) -> float:
 
 
 def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
-                 *, timeout: int = 600) -> Path:
-    """portrait image + audio -> lip-synced mp4 at out_path."""
+                 *, timeout: int = 600, enhancer: str | None = None) -> Path:
+    """portrait image + audio -> lip-synced mp4 at out_path. ``enhancer``
+    overrides the config (pass "" to skip GFPGAN and run ~3x faster)."""
     if not is_installed():
         raise AvatarError("SadTalker is not installed - run `brainrotter avatar-setup`")
 
@@ -70,6 +71,7 @@ def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
 
     wav = _to_wav(audio, work)
     av = settings.avatar
+    enh = av.enhancer if enhancer is None else enhancer
     cmd = [
         str(SADTALKER_PY), "inference.py",
         "--source_image", str(portrait.resolve()),
@@ -81,8 +83,8 @@ def talking_head(portrait: str | Path, audio: str | Path, out_path: str | Path,
     ]
     if av.device == "cpu":
         cmd.append("--cpu")
-    if av.enhancer and av.enhancer.lower() not in ("none", "off", ""):
-        cmd += ["--enhancer", av.enhancer]    # gfpgan — sharper but ~3x slower
+    if enh and enh.lower() not in ("none", "off", ""):
+        cmd += ["--enhancer", enh]            # gfpgan — sharper but ~3x slower
 
     try:
         subprocess.run(cmd, cwd=SADTALKER_DIR, check=True, capture_output=True,

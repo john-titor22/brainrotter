@@ -32,8 +32,18 @@ Goal: `brainrotter run` with no args makes a sensible video.
       signal→topic, background-category choice, angle/hook via local LLM. Rationale logged + shown.
 - [ ] Validate Director quality with a real local model (currently stub-tested).
 - [x] `formats/anime_figure.py` — real public figure → anime-protagonist brainrot.
-- [ ] Local AI image generation for visuals (SD/ComfyUI) — anime portraits of the
-      figure for `anime_figure`, creature art for `ai_brainrot`.
+- [x] Local AI image generation for visuals — `brainrotter/visuals/` (SDXL-Turbo
+      via `diffusers`, isolated venv, `brainrotter visual-setup`). Director picks
+      a "generated" treatment: a still per beat, Ken-Burns'd in order. Wired for
+      `object_story` first.
+- [ ] Extend generated visuals to `ai_brainrot` (creature art) + `anime_figure`
+      (anime shots). Motion pass: SVD / AnimateDiff per still.
+- [x] `Format.render_video` escape hatch — a format owns its whole video (script
+      + assets + render). First user: `movie_recap` (local film → muted 9:16
+      montage + faster-whisper transcript → LLM narration, as a whole-movie
+      series).
+- [ ] More `render_video` formats: funny-clip compilation, fake text-message
+      story, stick-figure fight.
 - [ ] Tune per-format style priors from early results.
 
 ## Phase 3 — Automation + operations  🟡

@@ -38,6 +38,25 @@ class TrendSignal(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class SeriesContext(BaseModel):
+    """Set on a Brief when the video is one part of a multi-part story.
+
+    The arc is planned once (``series.create``); each part is written with the
+    running story-so-far and its assigned goal so continuity holds.
+    """
+
+    series_id: str
+    title: str                       # the saga's title (no "Part N")
+    part: int                        # 1-based
+    part_count: int                  # total planned parts (<= series.max_parts)
+    premise: str                     # the whole story in 2-3 sentences
+    part_goal: str                   # what THIS part must cover
+    story_so_far: str = ""           # recap of parts 1..part-1
+    is_finale: bool = False          # last part — must resolve, no cliffhanger
+    broll: list[str] = Field(default_factory=list)  # stock-footage search phrases for this part
+    part_meta: dict[str, Any] = Field(default_factory=dict)  # format-specific per-part data (e.g. movie time range)
+
+
 class Brief(BaseModel):
     """The Director's decision for one video."""
 
@@ -51,6 +70,7 @@ class Brief(BaseModel):
     style: dict[str, Any] = Field(default_factory=dict)  # caption/voice/bg/cut knobs
     rationale: str = ""              # why the Director chose this
     source_signal: TrendSignal | None = None
+    series: SeriesContext | None = None  # set when this is one part of a series
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -98,8 +118,13 @@ class RenderPlan(BaseModel):
     voice_name: str = "en-US-AndrewNeural"
     voice_rate: float = 1.15             # 1.0 = normal
     voice_volume: float = 1.0
-    background_clips: list[str] = Field(default_factory=list)   # local video paths
+    background_clips: list[str] = Field(default_factory=list)   # local video OR image paths
     background_source: str = "local"     # local | pexels | pixabay
+    concat_mode: str = "random"          # random (shuffle cuts) | sequential (play in order)
+    visual_treatment: str = "footage"    # footage | generated (AI stills, Ken-Burns'd in order)
+    # For "generated": relative weight of each still, so the engine holds image N
+    # for the length of beat N's narration instead of a fixed duration.
+    visual_beat_weights: list[float] = Field(default_factory=list)
     clip_duration: int = 5              # max seconds per background cut (cut cadence)
     caption: CaptionStyle = CaptionStyle()
     music: str = "random"               # "random" | "" (none) | filename in songs dir

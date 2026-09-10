@@ -5,30 +5,39 @@
 out_dir = "workspace/out"
 
 [writer]
-# "ollama" = fully local, no API key (default). "anthropic" = Claude API.
+# "ollama" = fully local, no key (default). "groq" = Groq free tier
+# (Llama 3.3 70B, fast, frees the GPU — set GROQ_API_KEY in .env, get one at
+# https://console.groq.com/keys). "anthropic" = Claude API.
 provider = "ollama"
+groq_model = "qwen/qwen3.8-27b"
+groq_fast_model = "qwen/qwen3.8-27b"
 ollama_url = "http://localhost:11434"
 # Pull one first:  ollama pull llama3.1:8b   (fits an 8GB GPU at Q4)
 # Good alternatives: qwen2.5:7b, gemma2:9b, mistral-nemo
 ollama_model = "llama3.1:8b"
 ollama_fast_model = "llama3.1:8b"
-# Used for any non-English script — llama3.1 is weak outside English, Aya is
-# built for this.  ollama pull aya-expanse:8b   (falls back to ollama_model)
-multilingual_model = "aya-expanse:8b"
+# Darija ("ary") always routes to this LOCAL model regardless of provider —
+# general/cloud models drift to MSA. Atlas-Chat is purpose-built for Moroccan
+# Darija:  ollama pull hf.co/mradermacher/Atlas-Chat-9B-GGUF:Q4_K_M  (~6 GB).
+# Falls back to the main writer if it isn't pulled.
+darija_model = "hf.co/mradermacher/Atlas-Chat-9B-GGUF:Q4_K_M"
+multilingual_model = "aya-expanse:8b"    # legacy fallback for other languages
 temperature = 0.95
+# Per-request timeout (seconds) for the local model. Bump it if you see
+# "ollama request failed: timed out" — a busy GPU can take a few minutes.
+request_timeout = 300
 # Only used when provider = "anthropic":
 anthropic_model = "claude-opus-5"
 anthropic_fast_model = "claude-sonnet-5"
 
 [language]
-# The Director picks one language per video from these weights. Leave just
-# "en" for English-only. Codes: en, fr (French), ar (Modern Standard Arabic),
-# ary (Moroccan Darija — written by the LLM, spoken by the ar-MA voice).
-# Arabic/Darija need the bundled Arabic caption font + arabic-reshaper (both
-# handled by setup); non-English quality depends on multilingual_model above.
+# The Director picks one language per video from these weights. Only two are
+# supported: "en" (English) and "ary" (Moroccan Darija — written by the LLM,
+# spoken by an ar-MA voice; needs the bundled Arabic caption font +
+# arabic-reshaper, both handled by setup). English-only default:
 weights = { en = 1.0 }
-# e.g. a Moroccan-focused mix:
-# weights = { en = 0.3, fr = 0.3, ary = 0.4 }
+# e.g. mix in Darija:
+# weights = { en = 0.7, ary = 0.3 }
 
 [footage]
 # Let Brainrotter download its own background gameplay from YouTube
@@ -38,6 +47,8 @@ max_resolution = 480          # background gets cropped + captioned over; keep l
 seconds_per_clip = 120        # only the first N seconds of each source are pulled
 per_category = 2              # keep this many source videos per category
 auto_sync = true              # fetch on demand when a category is empty
+auto_grow_to = 5             # after a video, background-download one more category
+                             # until this many are cached (stops the feed repeating)
 sync_budget_seconds = 150     # give up a sync after this long
 # YouTube gates most downloads behind a login. Best option: export a Netscape
 # cookies.txt for youtube.com (Chrome/Edge extension "Get cookies.txt LOCALLY")
@@ -47,18 +58,92 @@ cookies_file = ""
 # You must fully CLOSE that browser first, and Chrome 127+ may still block it.
 cookies_from_browser = ""
 
+[visuals]
+# AI stills for a "generated" visual treatment — one per script beat, of the
+# actual subject, Ken-Burns-zoomed and played in order (object_story, ai_brainrot).
+# "pollinations" = free keyless FLUX (image.pollinations.ai) — realistic, good
+# hands/forms, ~30 s/image, needs network. "local" = isolated SDXL venv
+# (`brainrotter visual-setup`, ~7 GB, lower quality but offline).
+enabled = true
+provider = "pollinations"
+pollinations_model = "flux"        # flux | flux-realism | turbo
+# pollinations_token = ""          # optional free token for priority queue
+width = 832
+height = 1216                      # ~9:16
+max_images = 5                     # one still per beat up to here; longer scripts group beats
+min_seconds_per_image = 1.8
+# --- local provider only ---
+model = "stabilityai/sdxl-turbo"   # "stabilityai/sd-turbo" = smaller/faster
+steps = 2
+guidance = 0.0
+device = "cuda"                    # cuda | cpu (cpu is very slow)
+gpu_resident = false               # keep the model on the GPU — only on a card with headroom to spare
+timeout_seconds = 900
+# object_story: give the object a cartoon face + lip-sync (SadTalker). Off by
+# default — image models draw a whole person instead of "object with a face";
+# Ken-Burns over realistic stills of the actual object looks better.
+talking_subject = false
+
 [music]
-# Self-sourced, mood-tagged background music (like footage). The Director picks
-# a mood per video and a specific track inside it, so the feed stops sounding
-# like one looped song. Drop your own MP3s in assets/music/<mood>/ to skip
-# downloading.
+# Self-sourced background music. The Director picks a mood AND writes a specific
+# per-video brief ("dark drift phonk, aggressive"), and Brainrotter fetches a
+# track for exactly that — so the feed stops sounding like one looped song.
+# Drop your own MP3s in assets/music/<mood>/ to skip downloading.
 enabled = true
 allow_youtube = true
 per_mood = 4              # keep this many tracks per mood
 seconds_per_track = 90    # trim each download to this
 auto_sync = true          # fetch a mood on demand the first time it's used
 sync_budget_seconds = 150
-moods = ["hype", "tense", "eerie", "epic", "chill", "funny"]
+per_video_query = true    # the Director's specific per-video music brief (extra fetch)
+per_video_tracks = 2
+moods = ["hype", "tense", "eerie", "epic", "chill", "funny",
+         "sad", "dramatic", "nostalgic", "phonk", "dreamy", "quirky"]
+
+[movie]
+# "movie_recap" format: drop a film in assets/movies/, then
+#   brainrotter run -f movie_recap -t "<name>" --series
+# cuts it into Part 1..N — muted 9:16 montage + a brainrot narrator (dialogue
+# transcribed locally with faster-whisper). Copyright: same grey area as footage.
+movies_dir = "assets/movies"
+movie_seconds_per_part = 330   # how much film each part covers (~5.5 min)
+video_seconds_per_part = 55    # target length of each finished short
+max_parts = 24
+scene_threshold = 0.35         # ffmpeg scene-cut sensitivity (0-1)
+shot_seconds = 3.5             # how long each detected shot is held in the montage
+whisper_model = "base"         # tiny | base | small
+blur_pad = true                # 16:9 -> 9:16 via blurred pillarbox (false = hard centre crop)
+
+[compilation]
+# "compilation" format: the Director picks a theme (funny / satisfying /
+# animals / wholesome / fails / amazing) and Brainrotter sources short REAL
+# clips for it, cuts a 2-5s slice from each, and hard-cuts ~10 of them into one
+# ~35s vertical video — clip audio kept, quiet music bed under it. No narration,
+# no captions. Best clip sourcing needs a (free) Reddit API app — set
+# REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET in .env; else it uses Reddit RSS +
+# YouTube search. Copyright: same grey area as footage.
+enabled = true
+target_seconds = 45           # soft — a shallow pool makes a SHORTER video, not repeats
+clip_min_seconds = 3.0        # a clip shorter than this (after trimming dead space) is skipped
+clip_max_seconds = 14.0       # clips are shown ~in full; only the overrun past this is cut
+pool_per_theme = 40           # source clips cached per theme (deepened in background)
+fetch_per_build = 12           # max NEW downloads per sourcing pass (slow connections)
+recency_exclude = 3            # don't reuse a clip seen in the last N compilations
+music_volume = 0.05            # very low bed; also ducks under the clip audio (sidechain)
+time_filters = ["week", "month", "year"]   # rotate Reddit "top" windows for variety
+blur_pad = false               # 9:16 fit: false = centre-crop, true = blurred pillarbox
+allow_youtube = true           # also pull from YouTube search, not only Reddit
+sync_budget_seconds = 420
+# Cut points: the clip is left as-is — only leading black / obvious silent-static
+# intro and trailing silence/frozen-frame are trimmed. If what's left is longer
+# than clip_max_seconds the start is kept and the overrun dropped. Every clip is
+# used once before any is reused (and never in the last `recency_exclude`
+# videos); a shallow pool yields a shorter video, not repeated clips.
+# Auto-review the finished cut with a local vision model — drops slices that are
+# off-theme (game footage, screenshots), black, or frozen, then re-picks + re-
+# renders once. Pull one:  ollama pull llama3.2-vision:11b  (llava also works).
+review = true
+vision_model = "llama3.2-vision:11b"
 
 [video]
 width = 1080
@@ -68,25 +153,13 @@ fps = 30
 min_seconds = 15
 max_seconds = 90
 
-[tts]
-# edge-tts voice. Try: en-US-AndrewNeural, en-US-BrianNeural, en-US-AnaNeural,
-# en-US-GuyNeural (classic "narrator"), en-US-EmmaNeural.
-voice = "en-US-AndrewNeural"
-rate = "+18%"     # brainrot pacing is fast
-pitch = "+0Hz"
-
-[captions]
-style = "word_pop"        # word_pop | karaoke | block
-font = "Impact"
-font_size = 96
-primary_color = "&H00FFFFFF"     # ASS BGR: white
-outline_color = "&H00000000"     # black
-outline = 6
-max_words_on_screen = 3
-position = "center"       # center | lower_third
+# Voice, caption style and music mixing are decided per video (the Director
+# picks a voice/mood; each format sets its own caption look). Nothing to
+# configure here.
 
 [whisper]
-# faster-whisper model for forced alignment. tiny/base are plenty for alignment.
+# Only fills the vendored engine's own config (its subtitle fallback). The
+# movie_recap transcription model is [movie] whisper_model.
 model = "base"
 device = "auto"           # auto | cpu | cuda
 compute_type = "int8"
@@ -94,8 +167,22 @@ compute_type = "int8"
 [assets]
 backgrounds_dir = "assets/backgrounds"
 music_dir = "assets/music"
-sfx_dir = "assets/sfx"
-music_gain_db = -20.0
+
+[series]
+# "Related story" mode: the Director plans one story as an arc of parts and
+# produces Part 1..N as sequential videos (same narrator + music, continuity
+# carried between parts). The story must wrap up by the last part.
+max_parts = 9            # hard ceiling on parts per series
+default_parts = 9        # target when you don't pass --parts
+min_parts = 3
+lock_voice = true        # same narrator across the whole series
+lock_music = true        # same mood + track across the whole series
+target_seconds = 40      # per part
+# Series backgrounds are Creative-Commons b-roll that fits the narrative (not
+# gameplay). Require the CC "reuse allowed" licence on downloads; a part that
+# finds nothing CC falls back to gameplay footage so it still renders.
+require_cc = true
+broll_per_part = 3
 
 [avatar]
 # Talking-head generation for the anime_figure format. Runs SadTalker locally to
@@ -111,7 +198,7 @@ top_fraction = 0.55      # share of the 1080x1920 frame the talking head fills
 
 [director]
 # How the Director allocates between formats before it has performance data.
-default_weights = { reddit_story = 0.38, ai_brainrot = 0.25, anime_figure = 0.2, object_story = 0.17 }
+default_weights = { reddit_story = 0.30, ai_brainrot = 0.20, anime_figure = 0.16, object_story = 0.18, compilation = 0.16 }
 # Subreddits mined for the reddit_story format.
 subreddits = ["AmItheAsshole", "tifu", "pettyrevenge", "MaliciousCompliance", "confession"]
 # Explore vs exploit once metrics exist (0 = pure exploit).
@@ -120,3 +207,23 @@ exploration = 0.2
 [trends]
 reddit_time_filter = "day"
 reddit_limit = 25
+# Pull fresh topics from the open web (no API keys): Reddit's public RSS,
+# Google Trends, Wikipedia's most-read. The Director reshapes each raw trend
+# into a premise that fits the chosen format.
+use_web = true
+geo = "US"                 # Google Trends region: US, GB, FR, MA, DE, …
+web_cache_minutes = 90     # how long to reuse a fetched feed
+
+[publish]
+# Publish finished videos as Shorts. Set up providers with your own developer
+# apps (unlimited) - see .env, then `brainrotter publish-auth <youtube|meta|tiktok>`.
+# Or use "upload_post" (one upload-post.com key, 10/mo free).
+enabled = false
+providers = ["youtube", "instagram", "facebook", "tiktok"]
+youtube_privacy = "public"          # public | unlisted | private
+youtube_category = "24"             # 24 Entertainment, 22 People & Blogs
+tiktok_privacy = "auto"             # auto = public once your app is audited, else self-only
+ig_share_to_feed = true             # Instagram Reels also land in the main feed
+auto_publish = false                # publish every finished video automatically
+delete_local_after_publish = true   # free the .mp4 once it's up; DB keeps the links
+upload_host = "litterbox"           # temp host for Instagram's URL fetch: litterbox (72h) | catbox

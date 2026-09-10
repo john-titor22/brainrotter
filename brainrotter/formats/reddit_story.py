@@ -10,6 +10,7 @@ NAME = "Reddit Story Readalong"
 DESCRIPTION = "First-person AITA / revenge / confession story, TTS over gameplay."
 SIGNAL_KINDS = ["story", "topic"]
 BG_CATEGORIES = ["subway", "parkour", "gta", "temple_run", "trackmania", "slope", "roblox_obby"]
+DEFAULT_VISUAL_TREATMENT = "footage"   # gameplay under the narration
 
 
 def writer_system_prompt() -> str:
@@ -57,7 +58,7 @@ def parse_script(raw: dict) -> Script:
 
 
 VOICE_TAGS = ("reddit", "storytime", "hype")
-MUSIC_MOODS = ("tense", "funny", "hype", "chill")
+MUSIC_MOODS = ("tense", "funny", "hype", "chill", "dramatic", "phonk", "sad")
 
 
 def build_plan(brief: Brief, script: Script, background_clips: list[str]) -> RenderPlan:
