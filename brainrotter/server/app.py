@@ -37,6 +37,10 @@ app.mount(
 )
 _worker_started = False
 _worker_lock = threading.Lock()
+# Only one OAuth flow at a time — they all share the same localhost:8721
+# callback listener (see publish/oauth.py), so a second one started mid-flow
+# would fail to bind the port instead of queueing.
+_auth_flow_lock = threading.Lock()
 # Machine-wide mutex: only the process that can bind this port runs the worker,
 # so a second `brainrotter serve` never spawns a competing worker.
 _WORKER_MUTEX_PORT = 47654
@@ -315,6 +319,43 @@ def publish_settings(req: AutoPubReq) -> dict:
 
     _pub.set_auto_publish(req.auto_publish)
     return {"auto_publish": _pub.auto_publish_on()}
+
+
+class AuthStartReq(BaseModel):
+    provider: str  # youtube | meta | tiktok
+    account: str = "default"
+
+
+@app.post("/api/publish/auth-start")
+def publish_auth_start(req: AuthStartReq) -> dict:
+    """Add an account to a publish provider from the dashboard: opens the
+    OAuth consent page in the system browser and blocks (in this request's
+    own thread — other requests are unaffected) until the user approves it
+    or ~5 minutes pass. Mirrors `brainrotter publish-auth <provider>
+    --account <label>` on the CLI."""
+    from ..publish import meta as _m
+    from ..publish import tiktok as _t
+    from ..publish import youtube as _y
+
+    mods = {"youtube": _y, "meta": _m, "instagram": _m, "facebook": _m, "tiktok": _t}
+    mod = mods.get(req.provider)
+    if not mod:
+        raise HTTPException(400, "provider must be youtube | meta | tiktok")
+    if not mod.configured():
+        raise HTTPException(400, f"{req.provider} isn't configured yet — set its "
+                                 "client id/secret in .env first")
+    account = (req.account or "default").strip() or "default"
+    if not _auth_flow_lock.acquire(blocking=False):
+        raise HTTPException(409, "another account authorization is already in "
+                                 "progress — finish that browser tab (or let it "
+                                 "time out) and try again")
+    try:
+        msg = mod.auth(open_browser=True, account=account)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, str(exc))
+    finally:
+        _auth_flow_lock.release()
+    return {"message": msg}
 
 
 @app.get("/api/jobs/{job_id}")

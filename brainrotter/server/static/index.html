@@ -406,10 +406,13 @@ function renderPublishBox() {
     pl.style.marginTop = "4px";
     $("#publishstat").after(pl);
   }
+  const sharesLogin = {instagram: "facebook", facebook: "instagram"};
   pl.innerHTML = provs.map(x => {
     const mark = x.authed ? "&#10003;" : (x.configured ? "needs auth" : "&mdash;");
     const col = x.authed ? "var(--good)" : (x.configured ? "var(--work)" : "var(--dim)");
-    let line = `<div style="margin-top:4px"><span style="color:${col}">${esc(x.name)} ${mark}</span>`;
+    const accs = x.accounts || [];
+    let line = `<div style="margin-top:6px"><span style="color:${col}">${esc(x.name)} ${mark}</span>`;
+    if (accs.length > 1) line += ` <span style="color:var(--dim)">(${accs.length} accounts)</span>`;
     if (x.last_at) {
       if (x.last_ok) {
         line += ` &nbsp;<span style="color:var(--good)">last upload ok, ${timeAgo(x.last_at)}</span>`;
@@ -418,8 +421,47 @@ function renderPublishBox() {
                 `last try failed ${timeAgo(x.last_at)}: ${esc((x.last_error || "").slice(0, 90))}</span>`;
       }
     }
+    if (x.configured) {
+      line += ` &nbsp;<button class="mini" onclick="addAccount('${x.name}')">+ add account</button>`;
+      if (sharesLogin[x.name])
+        line += ` <span style="color:var(--dim)">(shares login with ${sharesLogin[x.name]})</span>`;
+    }
+    if (accs.length > 1) {
+      line += accs.map(a => {
+        const c = a.authed ? "var(--good)" : "var(--dim)";
+        const err = !a.authed ? "" : (a.last_ok === false
+          ? ` <span style="color:var(--bad)">failed ${timeAgo(a.last_at)}</span>`
+          : (a.last_ok ? ` <span style="color:var(--good)">ok ${timeAgo(a.last_at)}</span>` : ""));
+        return `<div style="margin-left:14px;color:${c}">&middot; ${esc(a.account)}${err}</div>`;
+      }).join("");
+    }
     return line + `</div>`;
   }).join("");
+}
+
+// One OAuth flow at a time (they share the localhost:8721 callback listener) —
+// opens the consent page in the system browser and waits for you to approve it.
+async function addAccount(provider) {
+  const existing = ((PUBLISH.providers || []).find(p => p.name === provider) || {}).accounts || [];
+  const label = prompt(
+    `Label for this new ${provider} account (e.g. a second channel/Page).\n` +
+    `A browser tab will open for you to approve it.`,
+    `account${existing.length + 1}`);
+  if (!label) return;
+  const btn = event && event.target;
+  const was = btn && btn.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = "approve in the browser tab…"; }
+  try {
+    const r = await api("/api/publish/auth-start", {method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({provider, account: label})});
+    alert(r.message || "authorized");
+    loadJobs();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = was; }
+  }
 }
 
 async function loadJobs() {
