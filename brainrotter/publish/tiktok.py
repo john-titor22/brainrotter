@@ -52,10 +52,11 @@ def auth(open_browser: bool = True) -> str:
     ck, cs = _creds()
     if not (ck and cs):
         return "set TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET in .env first"
-    # TikTok uses client_key (not client_id) in the auth URL
+    # TikTok uses client_key (not client_id) in the auth URL, and requires
+    # PKCE for a Desktop-registered redirect URI (not needed for Web).
     tok = oauth.run_flow(
         auth_url=_AUTH, token_url=_TOKEN, client_id=ck, client_secret=cs,
-        scope=_SCOPE, open_browser=open_browser,
+        scope=_SCOPE, open_browser=open_browser, pkce=True,
         extra_auth={"client_key": ck},
         extra_token={"client_key": ck},
     )

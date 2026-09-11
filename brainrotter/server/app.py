@@ -317,24 +317,6 @@ def publish_settings(req: AutoPubReq) -> dict:
     return {"auto_publish": _pub.auto_publish_on()}
 
 
-@app.post("/api/publish/all")
-def publish_all() -> dict:
-    from .. import publish as _pub
-
-    if not _pub.any_ready():
-        raise HTTPException(400, "upload-post not configured")
-    with db.connect() as c:
-        rows = c.execute("SELECT id FROM videos WHERE published_at IS NULL "
-                         "AND local_deleted = 0 ORDER BY created_at").fetchall()
-    done = failed = 0
-    for r in rows:
-        if _pub.publish(r["id"]).get("ok"):
-            done += 1
-        else:
-            failed += 1
-    return {"done": done, "failed": failed}
-
-
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     j = db.get_job(job_id)

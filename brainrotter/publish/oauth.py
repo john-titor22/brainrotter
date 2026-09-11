@@ -7,6 +7,8 @@ returns the token dict. Providers plug in their own URLs / params.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import secrets
 import threading
@@ -44,9 +46,18 @@ class _Catcher(BaseHTTPRequestHandler):
         return
 
 
+def _pkce_pair() -> tuple[str, str]:
+    """RFC 7636: a random code_verifier + its S256 code_challenge."""
+    verifier = secrets.token_urlsafe(64)[:128]
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
 def run_flow(*, auth_url: str, token_url: str, client_id: str, client_secret: str,
              scope: str, extra_auth: dict | None = None,
-             extra_token: dict | None = None, open_browser: bool = True) -> dict:
+             extra_token: dict | None = None, open_browser: bool = True,
+             pkce: bool = False) -> dict:
     state = secrets.token_urlsafe(16)
     params = {
         "client_id": client_id,
@@ -56,6 +67,11 @@ def run_flow(*, auth_url: str, token_url: str, client_id: str, client_secret: st
         "state": state,
         **(extra_auth or {}),
     }
+    code_verifier = None
+    if pkce:
+        code_verifier, code_challenge = _pkce_pair()
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     url = auth_url + "?" + urllib.parse.urlencode(params)
 
     _Catcher.result = {}
@@ -89,6 +105,8 @@ def run_flow(*, auth_url: str, token_url: str, client_id: str, client_secret: st
         "client_secret": client_secret,
         **(extra_token or {}),
     }
+    if code_verifier:
+        data["code_verifier"] = code_verifier
     r = httpx.post(token_url, data=data, timeout=30,
                    headers={"Accept": "application/json"})
     r.raise_for_status()

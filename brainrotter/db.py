@@ -449,14 +449,28 @@ def get_video_by_job(job_id: str) -> dict | None:
 def mark_published(video_id: str, *, platforms: list[str] | None = None,
                    urls: dict | None = None, error: str | None = None,
                    local_deleted: bool = False) -> None:
+    """Records the outcome of one publish() call for one video. Merges into
+    whatever platforms/urls are already stored — publishing platform B after
+    platform A must not erase A's link (the two calls are independent, e.g.
+    one publish button per platform per video card)."""
     with connect() as conn:
+        row = conn.execute(
+            "SELECT platforms, platform_urls FROM videos WHERE id = ?", (video_id,)
+        ).fetchone()
+        prior_platforms = set((row["platforms"] or "").split(",")) - {""} if row else set()
+        try:
+            prior_urls = json.loads(row["platform_urls"]) if row and row["platform_urls"] else {}
+        except Exception:
+            prior_urls = {}
+        merged_platforms = sorted(prior_platforms | set(platforms or []))
+        merged_urls = {**prior_urls, **(urls or {})}
         conn.execute(
             "UPDATE videos SET published_at = COALESCE(published_at, ?), "
             "platforms = ?, platform_urls = ?, publish_error = ?, local_deleted = ? "
             "WHERE id = ?",
-            (_utcnow() if not error else None,
-             ",".join(platforms) if platforms else None,
-             json.dumps(urls) if urls else None,
+            (_utcnow() if merged_urls else None,
+             ",".join(merged_platforms) if merged_platforms else None,
+             json.dumps(merged_urls) if merged_urls else None,
              error, 1 if local_deleted else 0, video_id),
         )
 

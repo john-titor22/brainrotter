@@ -31,8 +31,9 @@
   button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; margin-top: 14px; }
   button:hover { filter: brightness(1.1); }
   button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
-  button.mini { width: auto; margin: 0 0 0 8px; padding: 3px 9px; font-size: 12px; font-weight: 600;
-    background: var(--panel2); color: var(--accent); border: 1px solid var(--line); border-radius: 6px; }
+  button.mini, a.mini { display: inline-block; width: auto; margin: 0; padding: 3px 9px; font-size: 12px;
+    font-weight: 600; background: var(--panel2); color: var(--accent); border: 1px solid var(--line);
+    border-radius: 6px; text-decoration: none; cursor: pointer; }
   .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
   .job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -99,9 +100,8 @@
           Auto-publish finished videos
         </label>
         <div id="publishstat" class="sub" style="margin-top:4px"></div>
-        <button class="ghost" style="width:100%;margin-top:8px" onclick="publishAllPending()">
-          Publish all unpublished now
-        </button>
+        <div class="sub" style="margin-top:4px">Publish per video from its own card below &mdash;
+          no bulk "publish everything" button, so old renders never get blasted out at once.</div>
       </div>
     </div>
 
@@ -295,24 +295,41 @@ function badge(state) {
 
 let PUBLISH = { configured:false, enabled:false, auto:false, platforms:[], providers:[] };
 
+// Per-platform error text out of the combined "youtube: ...; facebook: ..." string
+// mark_published stores on a whole-job publish() call.
+function platformError(errStr, platform) {
+  if (!errStr) return null;
+  const part = errStr.split(";").map(s => s.trim()).find(s => s.startsWith(platform + ":"));
+  return part ? part.slice(platform.length + 1).trim() : null;
+}
+
+// One chip per ready platform, each independently clickable — publishing video A
+// to youtube never touches video B, and never touches instagram/facebook unless
+// you click that chip too. No card-wide "publish everywhere" action.
 function pubBlock(j) {
   if (j.state !== "done") return "";
-  const p = j.publish || {};
-  const urls = p.urls || {};
-  if (p.published_at && Object.keys(urls).length)
+  if (p_localDeleted(j)) {
+    const p = j.publish || {};
+    const urls = p.urls || {};
     return `<div class="sub" style="margin-top:6px">published &nbsp; ` +
       Object.entries(urls).map(([k,u]) => `<a href="${esc(u)}" target="_blank">${esc(k)}</a>`).join(" &middot; ") +
       `</div>`;
-  if (p.published_at)
-    return `<div class="sub" style="margin-top:6px">published${p.local_deleted ? " &middot; local file freed" : ""}</div>`;
-  if (p.error)
-    return `<div class="sub" style="margin-top:6px;color:var(--bad)">publish failed: ${esc(p.error)}
-      <button class="mini" onclick="publishJob('${j.id}')">retry</button></div>`;
-  if (PUBLISH.configured)
-    return `<div class="sub" style="margin-top:6px"><button class="mini" onclick="publishJob('${j.id}')">
-      publish to ${PUBLISH.platforms.join(" / ")}</button></div>`;
-  return "";
+  }
+  if (!PUBLISH.configured) return "";
+  const p = j.publish || {};
+  const urls = p.urls || {};
+  const chips = PUBLISH.platforms.map(plat => {
+    const url = urls[plat];
+    if (url) return `<a class="mini" style="color:var(--good);border-color:var(--good)"
+      href="${esc(url)}" target="_blank">&#10003; ${esc(plat)}</a>`;
+    const err = platformError(p.error, plat);
+    if (err) return `<button class="mini" style="color:var(--bad)" title="${esc(err)}"
+      onclick="publishJob('${j.id}','${plat}')">retry ${esc(plat)}</button>`;
+    return `<button class="mini" onclick="publishJob('${j.id}','${plat}')">publish ${esc(plat)}</button>`;
+  }).join(" ");
+  return `<div class="sub" style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${chips}</div>`;
 }
+function p_localDeleted(j) { return !!(j.publish || {}).local_deleted; }
 
 function jobCardHTML(j) {
   const b = j.brief || {}, r = j.result || {}, s = j.script || {};
@@ -339,14 +356,15 @@ function jobCardHTML(j) {
     <div>${right}</div>`;
 }
 
-async function publishJob(id) {
+async function publishJob(id, platform) {
   const el = event && event.target;
+  const was = el && el.textContent;
   if (el) { el.disabled = true; el.textContent = "publishing…"; }
   try {
     await api("/api/publish", {method:"POST", headers:{"content-type":"application/json"},
-                               body: JSON.stringify({job_id: id})});
+      body: JSON.stringify({job_id: id, platforms: platform ? [platform] : null})});
     loadJobs();
-  } catch (e) { alert(e.message); if (el) { el.disabled = false; el.textContent = "publish"; } }
+  } catch (e) { alert(e.message); if (el) { el.disabled = false; el.textContent = was; } }
 }
 
 // Incremental render: never touch an existing card's DOM node unless its state
@@ -359,12 +377,6 @@ async function toggleAutoPublish() {
       body: JSON.stringify({auto_publish: $("#autopublish").checked})});
   } catch (e) { alert(e.message); }
   loadJobs();
-}
-async function publishAllPending() {
-  if (!confirm("Publish every unpublished video now?")) return;
-  try { const r = await api("/api/publish/all", {method:"POST"});
-        alert(`published ${r.done}, failed ${r.failed}`); loadJobs(); }
-  catch (e) { alert(e.message); }
 }
 function renderPublishBox() {
   const box = $("#publishbox");
