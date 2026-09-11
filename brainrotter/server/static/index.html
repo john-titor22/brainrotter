@@ -79,6 +79,7 @@
   <nav class="tabs">
     <button id="tab-dash" class="on" onclick="showTab('dash')">Dashboard</button>
     <button id="tab-movie" onclick="showTab('movie')">Movie Recap</button>
+    <button id="tab-accounts" onclick="showTab('accounts')">Accounts</button>
   </nav>
 </header>
 
@@ -100,8 +101,9 @@
           Auto-publish finished videos
         </label>
         <div id="publishstat" class="sub" style="margin-top:4px"></div>
-        <div class="sub" style="margin-top:4px">Publish per video from its own card below &mdash;
-          no bulk "publish everything" button, so old renders never get blasted out at once.</div>
+        <button class="ghost" style="width:100%;margin-top:8px" onclick="showTab('accounts')">
+          Manage accounts &rarr;
+        </button>
       </div>
     </div>
 
@@ -200,6 +202,12 @@
       <h2>Recap series</h2>
       <div id="movieseries"></div>
     </div>
+  </div>
+</main>
+
+<main id="view-accounts" class="solo" hidden>
+  <div class="col">
+    <div id="accountsview"><div class="empty">loading&hellip;</div></div>
   </div>
 </main>
 
@@ -389,54 +397,85 @@ function timeAgo(iso) {
 
 // Platforms don't tell us their cooldown, so "when can we upload again" is
 // answered honestly: show the last real attempt (ok or not) and how long
-// ago, per provider — a fresh failure with an error you recognize (rate
-// limit / quota) means "not yet"; a success means it's working again.
+// ago — a fresh failure with an error you recognize (rate limit / quota)
+// means "not yet"; a success means it's working again. Full per-account
+// detail lives in the Accounts tab (renderAccountsTab); this box is just a
+// glance + a link there, so the Queue panel doesn't turn into a status wall.
 function renderPublishBox() {
   const box = $("#publishbox");
   box.hidden = !(PUBLISH.enabled || PUBLISH.configured);
   if (box.hidden) return;
   $("#autopublish").checked = !!PUBLISH.auto;
   $("#publishstat").textContent = PUBLISH.status || "";
-  const provs = PUBLISH.providers || [];
-  let pl = $("#publishprovs");
-  if (!pl) {
-    pl = document.createElement("div");
-    pl.id = "publishprovs";
-    pl.className = "sub";
-    pl.style.marginTop = "4px";
-    $("#publishstat").after(pl);
-  }
+}
+
+const PLATFORM_ICON = {youtube: "▶️", instagram: "📸",
+  facebook: "👍", tiktok: "🎵", upload_post: "🔗"};
+
+function renderAccountsTab(data) {
+  const el = $("#accountsview");
+  const providers = data.providers || [];
+  const catalog = data.catalog || {};
   const sharesLogin = {instagram: "facebook", facebook: "instagram"};
-  pl.innerHTML = provs.map(x => {
-    const mark = x.authed ? "&#10003;" : (x.configured ? "needs auth" : "&mdash;");
+  if (!providers.length) {
+    el.innerHTML = `<div class="empty">No publish providers configured. Set up credentials in .env, see the README.</div>`;
+    return;
+  }
+  el.innerHTML = providers.map(x => {
+    const icon = PLATFORM_ICON[x.name] || "";
+    const mark = x.authed ? "&#10003; ready" : (x.configured ? "needs auth" : "not configured");
     const col = x.authed ? "var(--good)" : (x.configured ? "var(--work)" : "var(--dim)");
     const accs = x.accounts || [];
-    let line = `<div style="margin-top:6px"><span style="color:${col}">${esc(x.name)} ${mark}</span>`;
-    if (accs.length > 1) line += ` <span style="color:var(--dim)">(${accs.length} accounts)</span>`;
-    if (x.last_at) {
-      if (x.last_ok) {
-        line += ` &nbsp;<span style="color:var(--good)">last upload ok, ${timeAgo(x.last_at)}</span>`;
-      } else {
-        line += ` &nbsp;<span style="color:var(--bad)" title="${esc(x.last_error || "")}">` +
-                `last try failed ${timeAgo(x.last_at)}: ${esc((x.last_error || "").slice(0, 90))}</span>`;
+    let card = `<div class="panel">
+      <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+        <span>${icon} ${esc(x.name[0].toUpperCase() + x.name.slice(1))}</span>
+        <span style="color:${col};font-size:13px">${mark}</span>
+      </h2>`;
+    if (sharesLogin[x.name])
+      card += `<div class="sub">shares its login with ${sharesLogin[x.name]}</div>`;
+    if (!accs.length) {
+      card += `<div class="sub" style="margin-top:8px">No accounts authorized yet.</div>`;
+    }
+    card += accs.map(a => {
+      const vids = ((catalog[x.name] || {})[a.account]) || [];
+      const ac = a.authed ? "var(--good)" : "var(--dim)";
+      let astat = "";
+      if (a.last_at) {
+        astat = a.last_ok
+          ? ` &nbsp;<span style="color:var(--good)">ok, last upload ${timeAgo(a.last_at)}</span>`
+          : ` &nbsp;<span style="color:var(--bad)" title="${esc(a.last_error || "")}">failed ${timeAgo(a.last_at)}: ${esc((a.last_error || "").slice(0, 80))}</span>`;
       }
-    }
-    if (x.configured) {
-      line += ` &nbsp;<button class="mini" onclick="addAccount('${x.name}')">+ add account</button>`;
-      if (sharesLogin[x.name])
-        line += ` <span style="color:var(--dim)">(shares login with ${sharesLogin[x.name]})</span>`;
-    }
-    if (accs.length > 1) {
-      line += accs.map(a => {
-        const c = a.authed ? "var(--good)" : "var(--dim)";
-        const err = !a.authed ? "" : (a.last_ok === false
-          ? ` <span style="color:var(--bad)">failed ${timeAgo(a.last_at)}</span>`
-          : (a.last_ok ? ` <span style="color:var(--good)">ok ${timeAgo(a.last_at)}</span>` : ""));
-        return `<div style="margin-left:14px;color:${c}">&middot; ${esc(a.account)}${err}</div>`;
-      }).join("");
-    }
-    return line + `</div>`;
+      const shown = vids.slice(0, 8).map(v =>
+        `<div class="sub" style="margin-left:12px;margin-top:3px">&middot; ` +
+        `<a href="${esc(v.url)}" target="_blank">${esc(v.title)}</a> ` +
+        `<span style="color:var(--dim)">${timeAgo(v.published_at)}</span></div>`).join("");
+      const more = vids.length > 8
+        ? `<div class="sub" style="margin-left:12px;color:var(--dim)">+ ${vids.length - 8} more</div>` : "";
+      const empty = !vids.length
+        ? `<div class="sub" style="margin-left:12px;color:var(--dim)">nothing published through this account yet</div>` : "";
+      return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+        <div style="color:${ac};font-weight:600">${esc(a.account)}
+          ${a.authed ? "&#10003;" : "&mdash; not authorized"}${astat}
+          ${vids.length ? `<span style="color:var(--dim);font-weight:400"> &middot; ${vids.length} published</span>` : ""}
+        </div>
+        ${shown}${more}${empty}
+      </div>`;
+    }).join("");
+    if (x.configured)
+      card += `<button class="ghost" style="width:100%;margin-top:12px" onclick="addAccount('${x.name}')">+ add account</button>`;
+    else
+      card += `<div class="sub" style="margin-top:10px">Run <code>${esc(x.hint || "")}</code> once credentials are set.</div>`;
+    return card + `</div>`;
   }).join("");
+}
+
+async function loadAccounts() {
+  try {
+    const data = await api("/api/accounts");
+    renderAccountsTab(data);
+  } catch (e) {
+    $("#accountsview").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
 }
 
 // One OAuth flow at a time (they share the localhost:8721 callback listener) —
@@ -548,9 +587,12 @@ async function clearHistory() {
 function showTab(name) {
   $("#view-dash").hidden = name !== "dash";
   $("#view-movie").hidden = name !== "movie";
+  $("#view-accounts").hidden = name !== "accounts";
   $("#tab-dash").classList.toggle("on", name === "dash");
   $("#tab-movie").classList.toggle("on", name === "movie");
+  $("#tab-accounts").classList.toggle("on", name === "accounts");
   if (name === "movie") { loadMovies(); loadMovieSeries(); }
+  if (name === "accounts") loadAccounts();
   try { localStorage.setItem("br_tab", name); } catch (e) {}
 }
 
@@ -677,10 +719,14 @@ async function loadCapabilities() {
 
 loadFormats(); loadTrends(); loadJobs(); loadQueue(); loadSeries(); loadCapabilities();
 loadVoices().then(fillVoices);
-try { if (localStorage.getItem("br_tab") === "movie") showTab("movie"); } catch (e) {}
+try {
+  const t = localStorage.getItem("br_tab");
+  if (t === "movie" || t === "accounts") showTab(t);
+} catch (e) {}
 setInterval(() => {
   loadJobs(); loadQueue(); loadSeries();
   if (!$("#view-movie").hidden) { loadMovies(); loadMovieSeries(); }
+  if (!$("#view-accounts").hidden) loadAccounts();
 }, 2500);
 setInterval(loadFormats, 15000);
 </script>

@@ -230,6 +230,7 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
     names = providers or _enabled_providers()
     meta = _meta_for(video)
     urls: dict[str, str] = {}
+    accounts_used: dict[str, str] = {}
     errors: list[str] = []
     log.info("publishing %s → %s", video_id, ", ".join(names))
 
@@ -262,6 +263,7 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
                     urls.update(r["urls"])
                 elif r.get("url"):
                     urls[name] = r["url"]
+                accounts_used[name] = account
             else:
                 errors.append(f"{name}: {r.get('error')}{acc_note}")
             _record_attempt(name, ok_this, None if ok_this else r.get("error"))
@@ -283,6 +285,7 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
     db.mark_published(video_id,
                       platforms=list(urls) if urls else None,
                       urls=urls or None,
+                      accounts=accounts_used or None,
                       error="; ".join(errors) or None,
                       local_deleted=deleted)
     return {"ok": ok, "urls": urls, "errors": errors, "deleted_local": deleted,

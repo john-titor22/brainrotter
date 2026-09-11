@@ -358,6 +358,39 @@ def publish_auth_start(req: AuthStartReq) -> dict:
     return {"message": msg}
 
 
+@app.get("/api/accounts")
+def accounts_view() -> dict:
+    """Every publish provider's authorized accounts, each with the catalog of
+    videos actually posted through it — the Accounts tab's data source."""
+    from .. import publish as _pub
+
+    catalog: dict[str, dict[str, list]] = {}
+    for v in db.published_videos():
+        try:
+            urls = json.loads(v["platform_urls"] or "{}")
+        except Exception:
+            urls = {}
+        try:
+            accounts = json.loads(v["platform_accounts"] or "{}")
+        except Exception:
+            accounts = {}
+        title = None
+        for col in ("script_json", "brief_json"):
+            try:
+                blob = json.loads(v[col]) if v.get(col) else {}
+            except Exception:
+                blob = {}
+            title = blob.get("title") or blob.get("topic")
+            if title:
+                break
+        for plat, url in urls.items():
+            acc = accounts.get(plat, "default")
+            catalog.setdefault(plat, {}).setdefault(acc, []).append({
+                "title": title or "(untitled)", "url": url, "published_at": v["published_at"],
+            })
+    return {"providers": _pub.provider_status(), "catalog": catalog}
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     j = db.get_job(job_id)

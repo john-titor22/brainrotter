@@ -120,6 +120,7 @@ def init_db() -> None:
             ("platform_urls", "platform_urls TEXT"),
             ("publish_error", "publish_error TEXT"),
             ("local_deleted", "local_deleted INTEGER DEFAULT 0"),
+            ("platform_accounts", "platform_accounts TEXT"),  # {"youtube": "second", ...}
         ):
             if name not in vcols:
                 conn.execute(f"ALTER TABLE videos ADD COLUMN {ddl}")
@@ -448,31 +449,52 @@ def get_video_by_job(job_id: str) -> dict | None:
 
 def mark_published(video_id: str, *, platforms: list[str] | None = None,
                    urls: dict | None = None, error: str | None = None,
-                   local_deleted: bool = False) -> None:
+                   local_deleted: bool = False, accounts: dict | None = None) -> None:
     """Records the outcome of one publish() call for one video. Merges into
-    whatever platforms/urls are already stored — publishing platform B after
-    platform A must not erase A's link (the two calls are independent, e.g.
-    one publish button per platform per video card)."""
+    whatever platforms/urls/accounts are already stored — publishing platform
+    B after platform A must not erase A's link (the two calls are
+    independent, e.g. one publish button per platform per video card).
+    ``accounts`` is {platform: account_label}, so the Accounts view can show
+    which account actually posted each video."""
     with connect() as conn:
         row = conn.execute(
-            "SELECT platforms, platform_urls FROM videos WHERE id = ?", (video_id,)
+            "SELECT platforms, platform_urls, platform_accounts FROM videos WHERE id = ?",
+            (video_id,)
         ).fetchone()
         prior_platforms = set((row["platforms"] or "").split(",")) - {""} if row else set()
         try:
             prior_urls = json.loads(row["platform_urls"]) if row and row["platform_urls"] else {}
         except Exception:
             prior_urls = {}
+        try:
+            prior_accounts = json.loads(row["platform_accounts"]) if row and row["platform_accounts"] else {}
+        except Exception:
+            prior_accounts = {}
         merged_platforms = sorted(prior_platforms | set(platforms or []))
         merged_urls = {**prior_urls, **(urls or {})}
+        merged_accounts = {**prior_accounts, **(accounts or {})}
         conn.execute(
             "UPDATE videos SET published_at = COALESCE(published_at, ?), "
-            "platforms = ?, platform_urls = ?, publish_error = ?, local_deleted = ? "
-            "WHERE id = ?",
+            "platforms = ?, platform_urls = ?, publish_error = ?, local_deleted = ?, "
+            "platform_accounts = ? WHERE id = ?",
             (_utcnow() if merged_urls else None,
              ",".join(merged_platforms) if merged_platforms else None,
              json.dumps(merged_urls) if merged_urls else None,
-             error, 1 if local_deleted else 0, video_id),
+             error, 1 if local_deleted else 0,
+             json.dumps(merged_accounts) if merged_accounts else None, video_id),
         )
+
+
+def published_videos() -> list[dict]:
+    """Every video that has at least one platform link, newest first — for
+    the Accounts view (grouping what went out through which account)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT v.id, v.job_id, v.published_at, v.platform_urls, v.platform_accounts, "
+            "j.script_json, j.brief_json FROM videos v JOIN jobs j ON j.id = v.job_id "
+            "WHERE v.platform_urls IS NOT NULL ORDER BY v.published_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def format_stats() -> dict[str, dict]:
