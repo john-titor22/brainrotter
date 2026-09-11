@@ -63,6 +63,21 @@ def _authed_accounts(name: str) -> list[str]:
     return [a for a in mod.accounts() if mod.authed(a)]
 
 
+def _ready_platforms() -> set[str]:
+    """Every enabled platform that can actually publish right now (has an
+    authorized account, or is upload_post with a key). Used to decide when a
+    video has been posted *everywhere it's going* — not just to whichever
+    platform you happened to click first — before its local file is freed."""
+    out = set()
+    for name in _enabled_providers():
+        if name == "upload_post":
+            if upload_post.configured():
+                out.add(name)
+        elif _authed_accounts(name):
+            out.add(name)
+    return out
+
+
 def _account_key(name: str, account: str) -> str:
     """Always a distinct key per account (including the default one) — never
     alias to the bare platform key. Earlier this returned ``name`` unchanged
@@ -258,20 +273,34 @@ def _meta_for(video: dict) -> Meta:
 
 # --- publish -------------------------------------------------------------
 
-def publish(video_id: str, providers: list[str] | None = None) -> dict:
+def publish(video_id: str, providers: list[str] | None = None,
+           accounts: dict[str, str] | None = None) -> dict:
+    """``accounts`` optionally forces a specific account per platform
+    ({"youtube": "second"}) instead of letting _select_account rotate —
+    the dashboard's per-platform account picker uses this. Falls back to
+    rotation for any platform not named in it."""
     s = get_settings().publish
     video = db.get_video(video_id)
     if not video:
         return {"ok": False, "error": f"no video {video_id}"}
-    if video.get("published_at"):
-        return {"ok": True, "already": True, "urls": _load_urls(video), "video_id": video_id}
+
+    existing_urls = _load_urls(video)
+    requested = providers or _enabled_providers()
+    # Skip platforms this video is already published to, but don't refuse
+    # the whole call just because some OTHER platform succeeded earlier —
+    # that used to permanently block "publish facebook" once youtube had
+    # already gone out for the same video (checked video["published_at"],
+    # which is set the moment ANY platform succeeds).
+    pending = [n for n in requested if n not in existing_urls]
+    if not pending:
+        return {"ok": True, "already": True, "urls": existing_urls, "video_id": video_id}
 
     path = Path(video["path"])
     if not path.is_file():
         db.mark_published(video_id, error="local file already gone")
-        return {"ok": False, "error": "local file missing"}
+        return {"ok": False, "error": "local file missing", "urls": existing_urls}
 
-    names = providers or _enabled_providers()
+    names = pending
     meta = _meta_for(video)
     urls: dict[str, str] = {}
     accounts_used: dict[str, str] = {}
@@ -298,7 +327,8 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
                 who = "meta" if mod is _meta_prov else name
                 errors.append(f"{name}: not authorized — run `brainrotter publish-auth {who}`")
                 continue
-            account = _select_account(name, accs)
+            forced = (accounts or {}).get(name)
+            account = forced if forced in accs else _select_account(name, accs)
             r = (mod.upload(path, meta, only=only, account=account) if only
                  else mod.upload(path, meta, account=account))
             ok_this = bool(r.get("ok"))
@@ -322,11 +352,19 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
 
     ok = bool(urls)
     deleted = False
-    if ok and s.delete_local_after_publish:
+    merged_platforms = {**existing_urls, **urls}
+    ready = _ready_platforms()
+    # Only free the file once it's posted to every platform that's actually
+    # ready to receive it — publishing to youtube alone used to delete the
+    # source immediately, which meant a follow-up "publish facebook" click
+    # on the same video would fail with "local file missing" even though
+    # you clearly intended to post it there too.
+    if ok and s.delete_local_after_publish and ready and ready.issubset(merged_platforms):
         try:
             os.remove(path)
             deleted = True
-            log.info("freed %s", path.name)
+            log.info("freed %s (published to every ready platform: %s)",
+                     path.name, sorted(merged_platforms))
         except OSError as exc:
             log.warning("could not delete %s: %s", path, exc)
 
@@ -340,11 +378,12 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
             "video_id": video_id, "error": "; ".join(errors) or None}
 
 
-def publish_job(job_id: str, providers: list[str] | None = None) -> dict:
+def publish_job(job_id: str, providers: list[str] | None = None,
+                accounts: dict[str, str] | None = None) -> dict:
     v = db.get_video_by_job(job_id)
     if not v:
         return {"ok": False, "error": f"no video for job {job_id}"}
-    return publish(v["id"], providers)
+    return publish(v["id"], providers, accounts)
 
 
 def _load_urls(video: dict) -> dict:
@@ -354,7 +393,31 @@ def _load_urls(video: dict) -> dict:
         return {}
 
 
+def delete_local(video_id: str) -> dict:
+    """Manually free a video's local file, regardless of publish status —
+    the dashboard's per-card delete button, for renders you don't want to
+    keep taking up disk (whether or not you ever published them anywhere)."""
+    video = db.get_video(video_id)
+    if not video:
+        return {"ok": False, "error": f"no video {video_id}"}
+    path = Path(video["path"])
+    if not video.get("local_deleted") and path.is_file():
+        try:
+            os.remove(path)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+    db.set_local_deleted(video_id, True)
+    return {"ok": True}
+
+
+def delete_local_by_job(job_id: str) -> dict:
+    v = db.get_video_by_job(job_id)
+    if not v:
+        return {"ok": False, "error": f"no video for job {job_id}"}
+    return delete_local(v["id"])
+
+
 # back-compat: some callers still import upload_post via this package
 __all__ = ["publish", "publish_job", "available", "status", "auto_publish_on",
            "set_auto_publish", "provider_status", "any_ready", "upload_post",
-           "accounts_for", "authed_accounts_for"]
+           "accounts_for", "authed_accounts_for", "delete_local", "delete_local_by_job"]

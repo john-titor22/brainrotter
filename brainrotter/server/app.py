@@ -294,6 +294,7 @@ def list_jobs(limit: int = 50) -> dict:
 class PublishReq(BaseModel):
     job_id: str
     platforms: list[str] | None = None
+    accounts: dict[str, str] | None = None  # {"youtube": "second"} — force an account, else rotate
 
 
 @app.post("/api/publish")
@@ -303,9 +304,21 @@ def publish_video(req: PublishReq) -> dict:
     if not _pub.any_ready():
         raise HTTPException(400, "no publish provider ready — `brainrotter publish-auth "
                                  "youtube` (etc.) or set UPLOAD_POST_API_KEY")
-    res = _pub.publish_job(req.job_id, req.platforms)
+    res = _pub.publish_job(req.job_id, req.platforms, req.accounts)
     if not res.get("ok"):
         raise HTTPException(502, res.get("error") or "publish failed")
+    return res
+
+
+@app.post("/api/jobs/{job_id}/delete-video")
+def delete_video(job_id: str) -> dict:
+    """Manually free a video's local file — published elsewhere already, or
+    just a render you don't want cluttering the dashboard or the disk."""
+    from .. import publish as _pub
+
+    res = _pub.delete_local_by_job(job_id)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("error") or "couldn't delete")
     return res
 
 

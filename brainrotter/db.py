@@ -433,6 +433,15 @@ def record_video(*, job_id: str, format_id: str, topic: str, path: str, duration
     return vid
 
 
+def set_local_deleted(video_id: str, deleted: bool = True) -> None:
+    """Flip local_deleted only — unlike mark_published, touches nothing else
+    (no COALESCE/merge side effects), for a manual "delete this render"
+    action that's independent of whether it was ever published."""
+    with connect() as conn:
+        conn.execute("UPDATE videos SET local_deleted = ? WHERE id = ?",
+                     (1 if deleted else 0, video_id))
+
+
 def get_video(video_id: str) -> dict | None:
     with connect() as conn:
         r = conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
