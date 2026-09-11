@@ -64,7 +64,13 @@ def _authed_accounts(name: str) -> list[str]:
 
 
 def _account_key(name: str, account: str) -> str:
-    return name if account == DEFAULT_ACCOUNT else f"{name}__{account}"
+    """Always a distinct key per account (including the default one) — never
+    alias to the bare platform key. Earlier this returned ``name`` unchanged
+    for the default account, which meant a *different* account's attempt
+    would silently overwrite what the default account's own cooldown check
+    reads, corrupting rotation fairness between accounts, not just the
+    display."""
+    return f"{name}::{account}"
 
 
 def _record_attempt(key: str, ok: bool, error: str | None) -> None:
@@ -76,6 +82,27 @@ def _record_attempt(key: str, ok: bool, error: str | None) -> None:
     db.meta_set(f"publish_last_{key}", json.dumps({
         "ok": ok, "at": datetime.now(timezone.utc).isoformat(), "error": error,
     }))
+
+
+_legacy_keys_migrated = False
+
+
+def _migrate_legacy_attempt_keys() -> None:
+    """One-time: the default account's last-attempt used to be stored under
+    the bare platform key (publish_last_<name>) instead of a namespaced one
+    — see _account_key. Copy it forward once so a real recent failure (e.g.
+    a just-hit quota) isn't silently forgotten by the key-format change,
+    which would otherwise make that account look fresh again and get
+    reselected immediately."""
+    global _legacy_keys_migrated
+    if _legacy_keys_migrated:
+        return
+    _legacy_keys_migrated = True
+    for name in _NATIVE:
+        legacy = db.meta_get(f"publish_last_{name}")
+        new_key = f"publish_last_{_account_key(name, DEFAULT_ACCOUNT)}"
+        if legacy and not db.meta_get(new_key):
+            db.meta_set(new_key, legacy)
 
 
 def _last_attempt(key: str) -> dict | None:
@@ -92,6 +119,7 @@ def _select_account(name: str, accs: list[str]) -> str:
     """Round-robins across a platform's authorized accounts (extra daily
     capacity beyond one account's quota), skipping any that failed within
     the cooldown window unless every account is currently cooling down."""
+    _migrate_legacy_attempt_keys()
     if len(accs) == 1:
         return accs[0]
     cursor_key = f"publish_rotation_{name}"
@@ -121,6 +149,7 @@ def provider_status() -> list[dict]:
     """For the dashboard / doctor — each provider's readiness plus its last
     publish attempt (ok/error/when), so a stuck platform is visible at a
     glance. ``accounts`` breaks the same down per authorized account."""
+    _migrate_legacy_attempt_keys()
     out = []
     for name in _enabled_providers():
         if name == "upload_post":
@@ -144,7 +173,20 @@ def provider_status() -> list[dict]:
                      "authed": any(ae["authed"] for ae in acc_entries),
                      "hint": f"`brainrotter publish-auth {'meta' if mod is _meta_prov else name}`",
                      "accounts": acc_entries}
-        last = _last_attempt(name)
+            # Platform-level rollup = whichever account was tried most
+            # recently (each account has its own independent key — see
+            # _account_key — so this is a read-only summary, not a separate
+            # write that could go stale or get overwritten by another
+            # account's attempt).
+            with_ts = [ae for ae in acc_entries if ae.get("last_at")]
+            if with_ts:
+                latest = max(with_ts, key=lambda ae: ae["last_at"])
+                entry["last_ok"] = latest.get("last_ok")
+                entry["last_at"] = latest.get("last_at")
+                entry["last_error"] = latest.get("last_error")
+            out.append(entry)
+            continue
+        last = _last_attempt("upload_post")
         if last:
             entry["last_ok"] = last.get("ok")
             entry["last_at"] = last.get("at")
@@ -237,6 +279,7 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
     log.info("publishing %s → %s", video_id, ", ".join(names))
 
     for name in names:
+        account = None  # set once selected below; guards the except clause
         try:
             if name == "upload_post":
                 r = upload_post.upload(path, title=meta.title, description=meta.description,
@@ -259,7 +302,10 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
             r = (mod.upload(path, meta, only=only, account=account) if only
                  else mod.upload(path, meta, account=account))
             ok_this = bool(r.get("ok"))
-            acc_note = f" [{account}]" if account != DEFAULT_ACCOUNT else ""
+            # Name the account whenever there's more than one to pick from —
+            # "youtube: quota exceeded" is ambiguous once a second channel
+            # exists; which one actually failed matters.
+            acc_note = f" [{account}]" if len(accs) > 1 else ""
             if ok_this:
                 if r.get("urls"):
                     urls.update(r["urls"])
@@ -268,11 +314,11 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
                 accounts_used[name] = account
             else:
                 errors.append(f"{name}: {r.get('error')}{acc_note}")
-            _record_attempt(name, ok_this, None if ok_this else r.get("error"))
             _record_attempt(_account_key(name, account), ok_this, None if ok_this else r.get("error"))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")
-            _record_attempt(name, False, str(exc))
+            if account is not None:
+                _record_attempt(_account_key(name, account), False, str(exc))
 
     ok = bool(urls)
     deleted = False
