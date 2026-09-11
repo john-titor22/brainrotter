@@ -150,26 +150,36 @@ def _publish_facebook(video: Path, meta: Meta, tok: dict) -> dict:
     desc = _caption(meta)
     try:
         with httpx.Client(timeout=None) as c:
-            start = c.post(f"{_G}/{pid}/video_reels", data={
-                "upload_phase": "start", "access_token": tk}).json()
+            r = c.post(f"{_G}/{pid}/video_reels", data={
+                "upload_phase": "start", "access_token": tk})
+            start = r.json()
+            if "video_id" not in start:
+                err = start.get("error", {})
+                return {"ok": False, "error": f"start phase: "
+                        f"{err.get('message') or start or r.text[:400]}"}
             video_id = start["video_id"]
             up_url = start["upload_url"]
             with video.open("rb") as fh:
-                c.post(up_url, content=fh.read(), headers={
+                up = c.post(up_url, content=fh.read(), headers={
                     "Authorization": f"OAuth {tk}",
                     "offset": "0", "file_size": str(size),
                 })
+                if up.status_code >= 400:
+                    return {"ok": False, "error": f"upload phase: {up.status_code}: {up.text[:400]}"}
             fin = c.post(f"{_G}/{pid}/video_reels", data={
                 "upload_phase": "finish", "video_id": video_id,
                 "video_state": "PUBLISHED", "description": desc,
                 "access_token": tk,
             })
             fin.raise_for_status()
+            fin_body = fin.json()
+            if fin_body.get("success") is False:
+                return {"ok": False, "error": f"finish phase: {fin_body}"}
         return {"ok": True, "url": f"https://facebook.com/reel/{video_id}"}
     except httpx.HTTPStatusError as exc:
         return {"ok": False, "error": f"{exc.response.status_code}: {exc.response.text[:400]}"}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def upload(video: Path, meta: Meta, *, only: str | None = None) -> dict:
