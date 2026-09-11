@@ -131,7 +131,9 @@ def provider_status() -> list[dict]:
             mod, _ = _NATIVE[name]
             acc_entries = []
             for a in mod.accounts():
-                ae = {"account": a, "authed": mod.authed(a)}
+                label = (mod.account_label(a, platform=name) if mod is _meta_prov
+                         else mod.account_label(a))
+                ae = {"account": a, "label": label, "authed": mod.authed(a)}
                 last = _last_attempt(_account_key(name, a))
                 if last:
                     ae["last_ok"] = last.get("ok")

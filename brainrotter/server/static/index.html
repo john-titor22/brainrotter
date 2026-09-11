@@ -453,8 +453,11 @@ function renderAccountsTab(data) {
         ? `<div class="sub" style="margin-left:12px;color:var(--dim)">+ ${vids.length - 8} more</div>` : "";
       const empty = !vids.length
         ? `<div class="sub" style="margin-left:12px;color:var(--dim)">nothing published through this account yet</div>` : "";
+      const label = a.label && a.label !== a.account ? a.label : a.account;
+      const idNote = label !== a.account
+        ? ` <span style="color:var(--dim);font-weight:400">(${esc(a.account)})</span>` : "";
       return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
-        <div style="color:${ac};font-weight:600">${esc(a.account)}
+        <div style="color:${ac};font-weight:600">${esc(label)}${idNote}
           ${a.authed ? "&#10003;" : "&mdash; not authorized"}${astat}
           ${vids.length ? `<span style="color:var(--dim);font-weight:400"> &middot; ${vids.length} published</span>` : ""}
         </div>

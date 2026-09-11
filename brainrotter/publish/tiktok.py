@@ -66,8 +66,46 @@ def auth(open_browser: bool = True, account: str = DEFAULT_ACCOUNT) -> str:
     )
     if "refresh_token" not in tok:
         return f"no refresh token: {tok}"
+    display_name = None
+    try:
+        r = httpx.get(f"{_API}/user/info/", params={"fields": "display_name"},
+                      headers={"Authorization": f"Bearer {tok['access_token']}"}, timeout=20)
+        r.raise_for_status()
+        display_name = r.json().get("data", {}).get("user", {}).get("display_name")
+        if display_name:
+            tok["display_name"] = display_name
+    except Exception as exc:  # noqa: BLE001
+        log.warning("couldn't fetch display name for %s: %s", account, exc)
     save_token(NAME, tok, account)
-    return f"tiktok authorized (account: {account})"
+    who = f" — {display_name}" if display_name else ""
+    return f"tiktok authorized (account: {account}){who}"
+
+
+_label_fetch_tried: set[str] = set()  # per-process, avoid retrying a failing fetch every poll
+
+
+def account_label(account: str = DEFAULT_ACCOUNT) -> str:
+    """Human-readable name for this account — the real display name once
+    known, else just the account id you gave it at auth time. Backfills it
+    once for accounts authorized before this existed (only tried once per
+    process so a failure doesn't add a network round-trip to every poll)."""
+    tok = load_token(NAME, account)
+    name = tok.get("display_name")
+    if name or account in _label_fetch_tried or not tok.get("refresh_token"):
+        return name or account
+    _label_fetch_tried.add(account)
+    try:
+        access = _access_token(account)
+        r = httpx.get(f"{_API}/user/info/", params={"fields": "display_name"},
+                      headers={"Authorization": f"Bearer {access}"}, timeout=10)
+        r.raise_for_status()
+        name = r.json().get("data", {}).get("user", {}).get("display_name")
+        if name:
+            tok["display_name"] = name
+            save_token(NAME, tok, account)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("couldn't backfill display name for %s: %s", account, exc)
+    return name or account
 
 
 def _access_token(account: str = DEFAULT_ACCOUNT) -> str:

@@ -31,7 +31,10 @@ NAME = "youtube"
 
 _AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 _TOKEN = "https://oauth2.googleapis.com/token"
-_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+# .readonly is only here so channels.list (the channel's display name, for
+# account_label below) is allowed — upload itself only needs .upload.
+_SCOPE = ("https://www.googleapis.com/auth/youtube.upload "
+         "https://www.googleapis.com/auth/youtube.readonly")
 _UPLOAD = ("https://www.googleapis.com/upload/youtube/v3/videos"
            "?uploadType=resumable&part=snippet,status")
 
@@ -64,8 +67,54 @@ def auth(open_browser: bool = True, account: str = DEFAULT_ACCOUNT) -> str:
     )
     if "refresh_token" not in tok:
         return "no refresh token returned — revoke the app at myaccount.google.com and retry"
+    channel_title = None
+    try:
+        r = httpx.get("https://www.googleapis.com/youtube/v3/channels",
+                      params={"part": "snippet", "mine": "true"},
+                      headers={"Authorization": f"Bearer {tok['access_token']}"}, timeout=20)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if items:
+            channel_title = items[0]["snippet"]["title"]
+            tok["channel_title"] = channel_title
+            tok["channel_id"] = items[0]["id"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("couldn't fetch channel name for %s: %s", account, exc)
     save_token(NAME, tok, account)
-    return f"youtube authorized (account: {account})"
+    who = f" — {channel_title}" if channel_title else ""
+    return f"youtube authorized (account: {account}){who}"
+
+
+_label_fetch_tried: set[str] = set()  # per-process, avoid retrying a failing fetch every poll
+
+
+def account_label(account: str = DEFAULT_ACCOUNT) -> str:
+    """Human-readable name for this account — the real channel title once
+    known, else just the account id you gave it at auth time. Accounts
+    authorized before this existed have no cached title yet; back it in
+    once (cheap: channels.list costs 1 quota unit) rather than requiring
+    re-auth, but only try once per process so a failure doesn't add a
+    network round-trip to every dashboard poll."""
+    tok = load_token(NAME, account)
+    title = tok.get("channel_title")
+    if title or account in _label_fetch_tried or not tok.get("refresh_token"):
+        return title or account
+    _label_fetch_tried.add(account)
+    try:
+        access = _access_token(account)
+        r = httpx.get("https://www.googleapis.com/youtube/v3/channels",
+                      params={"part": "snippet", "mine": "true"},
+                      headers={"Authorization": f"Bearer {access}"}, timeout=10)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if items:
+            title = items[0]["snippet"]["title"]
+            tok["channel_title"] = title
+            tok["channel_id"] = items[0]["id"]
+            save_token(NAME, tok, account)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("couldn't backfill channel name for %s: %s", account, exc)
+    return title or account
 
 
 def _access_token(account: str = DEFAULT_ACCOUNT) -> str:

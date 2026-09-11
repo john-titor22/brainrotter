@@ -103,6 +103,16 @@ def auth(open_browser: bool = True, account: str = DEFAULT_ACCOUNT) -> str:
     return f"meta authorized (account: {account}): Page '{pg.get('name')}'{tail}"
 
 
+def account_label(account: str = DEFAULT_ACCOUNT, *, platform: str = "facebook") -> str:
+    """Human-readable name for this account — the Page name (for facebook)
+    or the @handle (for instagram) once known, else just the account id
+    you gave it at auth time."""
+    t = load_token(NAME, account)
+    if platform == "instagram" and t.get("ig_username"):
+        return f"@{t['ig_username']}"
+    return t.get("page_name") or account
+
+
 def _caption(meta: Meta) -> str:
     ht = " ".join("#" + t.lstrip("#") for t in meta.tags[:8] + ["Shorts"])
     return (meta.description + " " + ht).strip()[:2100]
