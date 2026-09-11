@@ -378,6 +378,19 @@ async function toggleAutoPublish() {
   } catch (e) { alert(e.message); }
   loadJobs();
 }
+function timeAgo(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s/60)}m ago`;
+  if (s < 86400) return `${Math.round(s/3600)}h ago`;
+  return `${Math.round(s/86400)}d ago`;
+}
+
+// Platforms don't tell us their cooldown, so "when can we upload again" is
+// answered honestly: show the last real attempt (ok or not) and how long
+// ago, per provider — a fresh failure with an error you recognize (rate
+// limit / quota) means "not yet"; a success means it's working again.
 function renderPublishBox() {
   const box = $("#publishbox");
   box.hidden = !(PUBLISH.enabled || PUBLISH.configured);
@@ -395,8 +408,17 @@ function renderPublishBox() {
   }
   pl.innerHTML = provs.map(x => {
     const mark = x.authed ? "&#10003;" : (x.configured ? "needs auth" : "&mdash;");
-    const col = x.authed ? "var(--ok,#3a3)" : (x.configured ? "var(--warn,#c90)" : "var(--muted,#888)");
-    return `<span style="color:${col};margin-right:10px">${esc(x.name)} ${mark}</span>`;
+    const col = x.authed ? "var(--good)" : (x.configured ? "var(--work)" : "var(--dim)");
+    let line = `<div style="margin-top:4px"><span style="color:${col}">${esc(x.name)} ${mark}</span>`;
+    if (x.last_at) {
+      if (x.last_ok) {
+        line += ` &nbsp;<span style="color:var(--good)">last upload ok, ${timeAgo(x.last_at)}</span>`;
+      } else {
+        line += ` &nbsp;<span style="color:var(--bad)" title="${esc(x.last_error || "")}">` +
+                `last try failed ${timeAgo(x.last_at)}: ${esc((x.last_error || "").slice(0, 90))}</span>`;
+      }
+    }
+    return line + `</div>`;
   }).join("");
 }
 

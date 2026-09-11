@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import db
@@ -36,18 +37,45 @@ def _enabled_providers() -> list[str]:
     return [p for p in get_settings().publish.providers if p in _NATIVE or p == "upload_post"]
 
 
+def _record_attempt(name: str, ok: bool, error: str | None) -> None:
+    """Last publish attempt per provider (success or failure), so the dashboard
+    can tell you *why* uploads are stuck and roughly when they last worked —
+    that's the only honest way to know "when can we upload again": platforms
+    don't tell us their cooldown, we just show you the last real error."""
+    db.meta_set(f"publish_last_{name}", json.dumps({
+        "ok": ok, "at": datetime.now(timezone.utc).isoformat(), "error": error,
+    }))
+
+
+def _last_attempt(name: str) -> dict | None:
+    raw = db.meta_get(f"publish_last_{name}")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
 def provider_status() -> list[dict]:
-    """For the dashboard / doctor — each provider's readiness."""
+    """For the dashboard / doctor — each provider's readiness plus its last
+    publish attempt (ok/error/when), so a stuck platform is visible at a glance."""
     out = []
     for name in _enabled_providers():
         if name == "upload_post":
-            out.append({"name": "upload_post", "configured": upload_post.configured(),
-                        "authed": upload_post.configured(),
-                        "hint": "UPLOAD_POST_API_KEY + UPLOAD_POST_USER"})
-            continue
-        mod, _ = _NATIVE[name]
-        out.append({"name": name, "configured": mod.configured(), "authed": mod.authed(),
-                    "hint": f"`brainrotter publish-auth {'meta' if mod is _meta_prov else name}`"})
+            entry = {"name": "upload_post", "configured": upload_post.configured(),
+                     "authed": upload_post.configured(),
+                     "hint": "UPLOAD_POST_API_KEY + UPLOAD_POST_USER"}
+        else:
+            mod, _ = _NATIVE[name]
+            entry = {"name": name, "configured": mod.configured(), "authed": mod.authed(),
+                     "hint": f"`brainrotter publish-auth {'meta' if mod is _meta_prov else name}`"}
+        last = _last_attempt(name)
+        if last:
+            entry["last_ok"] = last.get("ok")
+            entry["last_at"] = last.get("at")
+            entry["last_error"] = last.get("error")
+        out.append(entry)
     return out
 
 
@@ -143,18 +171,22 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
                     urls[k] = u
                 if not r["ok"]:
                     errors.append(f"upload_post: {r.get('error')}")
+                _record_attempt("upload_post", bool(r["ok"]), r.get("error"))
                 continue
             mod, only = _NATIVE[name]
             r = mod.upload(path, meta, only=only) if only else mod.upload(path, meta)
-            if r.get("ok"):
+            ok_this = bool(r.get("ok"))
+            if ok_this:
                 if r.get("urls"):
                     urls.update(r["urls"])
                 elif r.get("url"):
                     urls[name] = r["url"]
             else:
                 errors.append(f"{name}: {r.get('error')}")
+            _record_attempt(name, ok_this, None if ok_this else r.get("error"))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")
+            _record_attempt(name, False, str(exc))
 
     ok = bool(urls)
     deleted = False
