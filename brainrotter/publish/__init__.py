@@ -20,7 +20,7 @@ from . import meta as _meta_prov
 from . import tiktok as _tiktok_prov
 from . import upload_post
 from . import youtube as _yt_prov
-from .base import Meta
+from .base import DEFAULT_ACCOUNT, Meta
 
 log = logging.getLogger("brainrotter.publish")
 
@@ -32,23 +32,54 @@ _NATIVE = {
     "tiktok": (_tiktok_prov, None),
 }
 
+# How long to skip an account after it fails before trying it again. Platforms
+# don't tell us their real cooldown, so this is a best-effort backoff, not a
+# guarantee — a fresh account just means "hasn't failed recently", not
+# "definitely won't fail again".
+_ACCOUNT_COOLDOWN_SECONDS = 2 * 3600
+
 
 def _enabled_providers() -> list[str]:
     return [p for p in get_settings().publish.providers if p in _NATIVE or p == "upload_post"]
 
 
-def _record_attempt(name: str, ok: bool, error: str | None) -> None:
-    """Last publish attempt per provider (success or failure), so the dashboard
-    can tell you *why* uploads are stuck and roughly when they last worked —
-    that's the only honest way to know "when can we upload again": platforms
-    don't tell us their cooldown, we just show you the last real error."""
-    db.meta_set(f"publish_last_{name}", json.dumps({
+def accounts_for(name: str) -> list[str]:
+    """Every account with a saved token for this platform."""
+    if name == "upload_post":
+        return [DEFAULT_ACCOUNT] if upload_post.configured() else []
+    mod, _ = _NATIVE[name]
+    return mod.accounts()
+
+
+def authed_accounts_for(name: str) -> list[str]:
+    """Public wrapper — every account on this platform that's actually authorized."""
+    return _authed_accounts(name)
+
+
+def _authed_accounts(name: str) -> list[str]:
+    if name == "upload_post":
+        return accounts_for(name)
+    mod, _ = _NATIVE[name]
+    return [a for a in mod.accounts() if mod.authed(a)]
+
+
+def _account_key(name: str, account: str) -> str:
+    return name if account == DEFAULT_ACCOUNT else f"{name}__{account}"
+
+
+def _record_attempt(key: str, ok: bool, error: str | None) -> None:
+    """Last publish attempt per provider (or provider+account), so the
+    dashboard can tell you *why* uploads are stuck and roughly when they last
+    worked — that's the only honest way to know "when can we upload again":
+    platforms don't tell us their cooldown, we just show you the last real
+    error."""
+    db.meta_set(f"publish_last_{key}", json.dumps({
         "ok": ok, "at": datetime.now(timezone.utc).isoformat(), "error": error,
     }))
 
 
-def _last_attempt(name: str) -> dict | None:
-    raw = db.meta_get(f"publish_last_{name}")
+def _last_attempt(key: str) -> dict | None:
+    raw = db.meta_get(f"publish_last_{key}")
     if not raw:
         return None
     try:
@@ -57,19 +88,60 @@ def _last_attempt(name: str) -> dict | None:
         return None
 
 
+def _select_account(name: str, accs: list[str]) -> str:
+    """Round-robins across a platform's authorized accounts (extra daily
+    capacity beyond one account's quota), skipping any that failed within
+    the cooldown window unless every account is currently cooling down."""
+    if len(accs) == 1:
+        return accs[0]
+    cursor_key = f"publish_rotation_{name}"
+    try:
+        start = int(db.meta_get(cursor_key, "0") or "0") % len(accs)
+    except ValueError:
+        start = 0
+    order = accs[start:] + accs[:start]
+    now = datetime.now(timezone.utc)
+    fresh = []
+    for acc in order:
+        last = _last_attempt(_account_key(name, acc))
+        if last and not last.get("ok"):
+            try:
+                age = (now - datetime.fromisoformat(last["at"])).total_seconds()
+            except Exception:
+                age = _ACCOUNT_COOLDOWN_SECONDS  # unparsable timestamp -> don't block on it
+            if age < _ACCOUNT_COOLDOWN_SECONDS:
+                continue
+        fresh.append(acc)
+    chosen = fresh[0] if fresh else order[0]
+    db.meta_set(cursor_key, str((accs.index(chosen) + 1) % len(accs)))
+    return chosen
+
+
 def provider_status() -> list[dict]:
     """For the dashboard / doctor — each provider's readiness plus its last
-    publish attempt (ok/error/when), so a stuck platform is visible at a glance."""
+    publish attempt (ok/error/when), so a stuck platform is visible at a
+    glance. ``accounts`` breaks the same down per authorized account."""
     out = []
     for name in _enabled_providers():
         if name == "upload_post":
             entry = {"name": "upload_post", "configured": upload_post.configured(),
                      "authed": upload_post.configured(),
-                     "hint": "UPLOAD_POST_API_KEY + UPLOAD_POST_USER"}
+                     "hint": "UPLOAD_POST_API_KEY + UPLOAD_POST_USER", "accounts": []}
         else:
             mod, _ = _NATIVE[name]
-            entry = {"name": name, "configured": mod.configured(), "authed": mod.authed(),
-                     "hint": f"`brainrotter publish-auth {'meta' if mod is _meta_prov else name}`"}
+            acc_entries = []
+            for a in mod.accounts():
+                ae = {"account": a, "authed": mod.authed(a)}
+                last = _last_attempt(_account_key(name, a))
+                if last:
+                    ae["last_ok"] = last.get("ok")
+                    ae["last_at"] = last.get("at")
+                    ae["last_error"] = last.get("error")
+                acc_entries.append(ae)
+            entry = {"name": name, "configured": mod.configured(),
+                     "authed": any(ae["authed"] for ae in acc_entries),
+                     "hint": f"`brainrotter publish-auth {'meta' if mod is _meta_prov else name}`",
+                     "accounts": acc_entries}
         last = _last_attempt(name)
         if last:
             entry["last_ok"] = last.get("ok")
@@ -173,17 +245,27 @@ def publish(video_id: str, providers: list[str] | None = None) -> dict:
                     errors.append(f"upload_post: {r.get('error')}")
                 _record_attempt("upload_post", bool(r["ok"]), r.get("error"))
                 continue
+
             mod, only = _NATIVE[name]
-            r = mod.upload(path, meta, only=only) if only else mod.upload(path, meta)
+            accs = _authed_accounts(name)
+            if not accs:
+                who = "meta" if mod is _meta_prov else name
+                errors.append(f"{name}: not authorized — run `brainrotter publish-auth {who}`")
+                continue
+            account = _select_account(name, accs)
+            r = (mod.upload(path, meta, only=only, account=account) if only
+                 else mod.upload(path, meta, account=account))
             ok_this = bool(r.get("ok"))
+            acc_note = f" [{account}]" if account != DEFAULT_ACCOUNT else ""
             if ok_this:
                 if r.get("urls"):
                     urls.update(r["urls"])
                 elif r.get("url"):
                     urls[name] = r["url"]
             else:
-                errors.append(f"{name}: {r.get('error')}")
+                errors.append(f"{name}: {r.get('error')}{acc_note}")
             _record_attempt(name, ok_this, None if ok_this else r.get("error"))
+            _record_attempt(_account_key(name, account), ok_this, None if ok_this else r.get("error"))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")
             _record_attempt(name, False, str(exc))
@@ -223,4 +305,5 @@ def _load_urls(video: dict) -> dict:
 
 # back-compat: some callers still import upload_post via this package
 __all__ = ["publish", "publish_job", "available", "status", "auto_publish_on",
-           "set_auto_publish", "provider_status", "any_ready", "upload_post"]
+           "set_auto_publish", "provider_status", "any_ready", "upload_post",
+           "accounts_for", "authed_accounts_for"]

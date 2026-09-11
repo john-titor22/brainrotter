@@ -233,9 +233,17 @@ app.add_typer(series_app, name="series")
 @app.command("publish-auth")
 def publish_auth_cmd(
     provider: str = typer.Argument(..., help="youtube | meta | tiktok"),
+    account: str = typer.Option("default", "--account", "-a",
+                                help="Label for this account, e.g. a second channel/Page. "
+                                     "Omit for the first/only account on this platform."),
     no_browser: bool = typer.Option(False, "--no-browser", help="Just print the URL."),
 ):
-    """One-time OAuth for a native publish provider (opens your browser)."""
+    """One-time OAuth for a native publish provider (opens your browser).
+
+    Run this again with a different --account to authorize a SECOND account
+    on the same platform (e.g. a second YouTube channel) — publish() then
+    round-robins across every authorized account on that platform for extra
+    daily capacity, instead of overwriting the first account's token."""
     from .publish import meta as _m
     from .publish import tiktok as _t
     from .publish import youtube as _y
@@ -248,7 +256,25 @@ def publish_auth_cmd(
     if not mod.configured():
         console.print(mod.auth(open_browser=False))     # prints the "set X in .env" hint
         raise typer.Exit(1)
-    console.print(mod.auth(open_browser=not no_browser))
+    console.print(mod.auth(open_browser=not no_browser, account=account))
+
+
+@app.command("accounts")
+def accounts_cmd(provider: str = typer.Argument(None, help="youtube | meta | tiktok. Omit for all.")):
+    """List every authorized account per publish provider."""
+    from . import publish as pub
+
+    names = [provider] if provider else ["youtube", "instagram", "facebook", "tiktok"]
+    for name in names:
+        accs = pub.accounts_for(name if name != "meta" else "instagram")
+        if not accs:
+            console.print(f"[dim]{name}: no accounts authorized yet[/]")
+            continue
+        console.print(f"[bold]{name}[/]")
+        authed = pub.authed_accounts_for(name if name != "meta" else "instagram")
+        for a in accs:
+            ready = "authorized" if a in authed else "not authorized"
+            console.print(f"  {a}  [dim]{ready}[/]")
 
 
 @app.command("publish")

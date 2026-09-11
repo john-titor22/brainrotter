@@ -27,7 +27,7 @@ import httpx
 
 from ..config import get_settings
 from . import hosting, oauth
-from .base import Meta, load_token, save_token
+from .base import DEFAULT_ACCOUNT, Meta, list_accounts, load_token, save_token
 
 log = logging.getLogger("brainrotter.publish")
 NAME = "meta"
@@ -47,12 +47,16 @@ def configured() -> bool:
     return all(_creds())
 
 
-def authed() -> bool:
-    t = load_token(NAME)
+def accounts() -> list[str]:
+    return list_accounts(NAME)
+
+
+def authed(account: str = DEFAULT_ACCOUNT) -> bool:
+    t = load_token(NAME, account)
     return bool(t.get("page_token") and t.get("page_id"))
 
 
-def auth(open_browser: bool = True) -> str:
+def auth(open_browser: bool = True, account: str = DEFAULT_ACCOUNT) -> str:
     cid, csec = _creds()
     if not (cid and csec):
         return "set META_APP_ID / META_APP_SECRET in .env first"
@@ -94,9 +98,9 @@ def auth(open_browser: bool = True) -> str:
         "ig_user_id": ig.get("id"),
         "ig_username": ig.get("username"),
         "saved_at": time.time(),
-    })
+    }, account)
     tail = f" + Instagram @{ig.get('username')}" if ig.get("id") else " (no IG linked)"
-    return f"meta authorized: Page '{pg.get('name')}'{tail}"
+    return f"meta authorized (account: {account}): Page '{pg.get('name')}'{tail}"
 
 
 def _caption(meta: Meta) -> str:
@@ -182,8 +186,9 @@ def _publish_facebook(video: Path, meta: Meta, tok: dict) -> dict:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def upload(video: Path, meta: Meta, *, only: str | None = None) -> dict:
-    tok = load_token(NAME)
+def upload(video: Path, meta: Meta, *, only: str | None = None,
+          account: str = DEFAULT_ACCOUNT) -> dict:
+    tok = load_token(NAME, account)
     if not tok.get("page_token"):
         return {"ok": False, "error": "not authorized — run `brainrotter publish-auth meta`"}
     results = {}

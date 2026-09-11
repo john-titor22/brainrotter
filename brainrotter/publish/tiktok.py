@@ -24,7 +24,7 @@ import httpx
 
 from ..config import get_settings
 from . import oauth
-from .base import Meta, load_token, save_token, token_expired
+from .base import DEFAULT_ACCOUNT, Meta, list_accounts, load_token, save_token, token_expired
 
 log = logging.getLogger("brainrotter.publish")
 NAME = "tiktok"
@@ -44,11 +44,15 @@ def configured() -> bool:
     return all(_creds())
 
 
-def authed() -> bool:
-    return bool(load_token(NAME).get("refresh_token"))
+def accounts() -> list[str]:
+    return list_accounts(NAME)
 
 
-def auth(open_browser: bool = True) -> str:
+def authed(account: str = DEFAULT_ACCOUNT) -> bool:
+    return bool(load_token(NAME, account).get("refresh_token"))
+
+
+def auth(open_browser: bool = True, account: str = DEFAULT_ACCOUNT) -> str:
     ck, cs = _creds()
     if not (ck and cs):
         return "set TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET in .env first"
@@ -62,12 +66,12 @@ def auth(open_browser: bool = True) -> str:
     )
     if "refresh_token" not in tok:
         return f"no refresh token: {tok}"
-    save_token(NAME, tok)
-    return "tiktok authorized"
+    save_token(NAME, tok, account)
+    return f"tiktok authorized (account: {account})"
 
 
-def _access_token() -> str:
-    tok = load_token(NAME)
+def _access_token(account: str = DEFAULT_ACCOUNT) -> str:
+    tok = load_token(NAME, account)
     if not tok.get("refresh_token"):
         raise RuntimeError("not authorized — run `brainrotter publish-auth tiktok`")
     if token_expired(tok):
@@ -81,7 +85,7 @@ def _access_token() -> str:
         fresh["expires_at"] = time.time() + float(fresh.get("expires_in", 3600))
         fresh.setdefault("refresh_token", tok["refresh_token"])
         tok.update(fresh)
-        save_token(NAME, tok)
+        save_token(NAME, tok, account)
     return tok["access_token"]
 
 
@@ -101,9 +105,9 @@ def _privacy(access: str) -> str:
     return "SELF_ONLY"
 
 
-def upload(video: Path, meta: Meta) -> dict:
+def upload(video: Path, meta: Meta, account: str = DEFAULT_ACCOUNT) -> dict:
     try:
-        access = _access_token()
+        access = _access_token(account)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
